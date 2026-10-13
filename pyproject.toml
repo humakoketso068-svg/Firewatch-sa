@@ -1,0 +1,13 @@
+[project]
+name = "firewatch"
+version = "1.0.0"
+description = "Firewatch: wildfire early-warning console for South Africa"
+requires-python = ">=3.10"
+dependencies = ["flet>=1.0.0"]
+
+[tool.flet]
+product = "Firewatch"
+company = "Firewatch"
+
+[tool.flet.app]
+path = "src"
