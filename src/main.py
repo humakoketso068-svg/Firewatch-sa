@@ -17,6 +17,7 @@ Run:
 
 import asyncio
 import os
+import sys
 from datetime import datetime
 
 import flet as ft
@@ -699,19 +700,26 @@ class FirewatchApp:
 
 
 async def main(page: ft.Page):
+    page.add(ft.Text("Starting Firewatch..."))
+    page.update()
     if page.web:
         # Running in a browser (e.g. deployed on Vercel): keep accounts in the browser's storage.
         try:
             prefs = ft.SharedPreferences()
-            raw = await prefs.get("firewatch_users")
+            raw = await asyncio.wait_for(prefs.get("firewatch_users"), timeout=5)
             auth.use_browser_storage(
                 raw, lambda data: page.run_task(prefs.set, "firewatch_users", data))
         except Exception:
             auth.use_browser_storage(None, None)     # fall back to in-memory for this visit
+    page.clean()
     FirewatchApp(page)
 
 
-if __name__ == "__main__":
+if sys.platform == "emscripten":
+    # Running inside the browser (flet build web, Pyodide): the page is already served,
+    # so just hand the app to Flet. Do not try to open a window or start a server here.
+    ft.run(main)
+elif __name__ == "__main__":
     port = os.environ.get("PORT")
     if port:
         # Hosted (Render, Railway, etc. set PORT): serve as a web app.
