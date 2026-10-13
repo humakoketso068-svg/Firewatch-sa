@@ -122,3 +122,4 @@ add it to `LABELLED` in `geo.py`. Ignition odds scale automatically with the num
   works offline and on mobile.
 - To go beyond a prototype, swap the toy risk formula for a validated fire-danger index (e.g., NFDRS)
   and the spread model for a physics-based one (e.g., Rothermel).
+# Firewatch
