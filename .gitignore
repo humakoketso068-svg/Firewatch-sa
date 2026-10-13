@@ -1,5 +1,7 @@
-﻿__pycache__/
-*.pyc
-.venv/
 build/
+dist/
+.venv/
+__pycache__/
+*.pyc
+.vercel/
 .env
