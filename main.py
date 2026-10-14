@@ -417,6 +417,9 @@ class FirewatchApp:
         self.sim = Simulation()
         self.showing_public = False
         self.running = True
+        self.seen_fires = set()       # fire ids already announced
+        self.alert_queue = []         # new fires waiting for a popup
+        self.alert_showing = False
         page.on_close = self.stop
 
         page.title = "Firewatch — Live Detection Console"
@@ -614,6 +617,7 @@ class FirewatchApp:
             try:
                 self.sim.tick()
                 self.refresh()
+                self.check_alerts()
             except Exception:
                 # The session was closed (visitor left); stop ticking.
                 self.running = False
@@ -691,6 +695,8 @@ class FirewatchApp:
 
     def reset(self, e=None):
         self.sim = Simulation()
+        self.seen_fires.clear()
+        self.alert_queue.clear()
         self.refresh()
 
     def toggle_view(self, e=None):
@@ -707,6 +713,26 @@ class FirewatchApp:
         self.header.set_user(user)
         self.map.user_zone_id = user["home_zone_id"] if user else None
         self.refresh()
+
+    # -- fire alert popups ---------------------------------------------------
+    def _other_dialog_open(self):
+        """True while the user is in another dialog (login, emergency form, ...)."""
+        try:
+            return any(isinstance(d, ft.AlertDialog) and d.open for d in self.page._dialogs.controls)
+        except Exception:
+            return False
+
+    def check_alerts(self):
+        """Queue newly detected fires, then show one popup (batched) if the user is free."""
+        stamp = datetime.now().strftime("%H:%M:%S")
+        for f in self.sim.fires:
+            if not f["contained"] and f["id"] not in self.seen_fires:
+                self.seen_fires.add(f["id"])
+                self.alert_queue.append({**f, "ts": stamp})
+        if self.alert_queue and not self.alert_showing and not self._other_dialog_open():
+            batch, self.alert_queue = self.alert_queue, []
+            self.alert_showing = True
+            dialogs.show_fire_alert(self, batch)
 
     def toast(self, message):
         self.page.show_dialog(ft.SnackBar(content=ft.Text(message), duration=3500))

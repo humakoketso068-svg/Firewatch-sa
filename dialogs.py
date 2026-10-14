@@ -1,4 +1,4 @@
-
+"""Dialogs: sign up, log in, profile, and the emergency fire-station alert."""
 
 import asyncio
 import random
@@ -9,7 +9,7 @@ import auth
 from stations import eta_minutes, nearby_stations
 from ui import (
     DIM, EMERGENCY, EMERGENCY_DARK, FAINT, INFO_BLUE, LINE, LINE_SOFT, RISK, TEXT,
-    primary_button, txt,
+    chip, primary_button, txt,
 )
 
 
@@ -274,6 +274,82 @@ def show_emergency(app):
                       txt("Emergency alert", 19, EMERGENCY_DARK, bold=True)], spacing=8),
         content=ft.Container(content=body, width=_w(app, 440)),
         actions=[actions],
+        inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
+    )
+    app.page.show_dialog(dlg)
+
+
+# ---------------------------------------------------------------------------
+# Fire-detected alert popup (Acknowledge / Dismiss)
+# ---------------------------------------------------------------------------
+
+def show_fire_alert(app, fires):
+    """Popup shown when the sensor network detects new fire(s).
+
+    Acknowledge: records it in the event feed and zooms the map to the fire.
+    Dismiss:     just closes the popup.
+    """
+    many = len(fires) > 1
+    worst = max(fires, key=lambda f: ("low", "moderate", "high", "extreme").index(f["severity"]))
+    accent = RISK.get(worst["severity"], EMERGENCY)
+
+    def close(e=None):
+        app.alert_showing = False
+        app.page.pop_dialog()
+
+    def dismiss(e=None):
+        close()
+
+    def acknowledge(e=None):
+        who = app.user["name"] if app.user else "Operator"
+        places = ", ".join(f["zone_name"].split(" (")[0] for f in fires[:3])
+        more = f" +{len(fires) - 3} more" if len(fires) > 3 else ""
+        app.sim.log_event("info", "Alert", f"[b]{who}[/b] acknowledged fire alert: {places}{more}.")
+        close()
+        if not many:
+            app.map.focus_on(fires[0]["x"], fires[0]["y"], 3.0)
+        else:
+            app.map.focus_fires()
+        app.refresh()
+        app.toast("Alert acknowledged.")
+
+    def row(f):
+        place = f["zone_name"].split(" (")[0]
+        color = RISK.get(f["severity"], EMERGENCY)
+        return ft.Container(
+            content=ft.Row(
+                [ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color=color, size=22),
+                 ft.Column([txt(f"{place}, {f['province']}", 13.5, TEXT, bold=True),
+                            txt(f"Detected {f['ts']}", 11.5, DIM)], spacing=1, tight=True, expand=True),
+                 chip(f["severity"], color)],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
+            padding=ft.Padding.symmetric(vertical=7),
+            border=ft.Border.only(bottom=ft.BorderSide(1, LINE_SOFT)),
+        )
+
+    if many:
+        msg = (f"{len(fires)} new smoke/heat signatures were confirmed by the sensor network. "
+               "Ground crews should be alerted.")
+    else:
+        f = fires[0]
+        msg = (f"New smoke/heat signature confirmed at {f['zone_name'].split(' (')[0]}, "
+               f"{f['province']} \u2014 risk level {f['severity'].upper()}.")
+
+    body = [txt(msg, 13, TEXT), *[row(f) for f in fires[:4]]]
+    if len(fires) > 4:
+        body.append(txt(f"+ {len(fires) - 4} more", 12, DIM))
+
+    dlg = ft.AlertDialog(
+        modal=True,
+        shape=ft.RoundedRectangleBorder(radius=14),
+        title=ft.Row([ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=accent, size=26),
+                      txt("Fire alert" if not many else f"{len(fires)} fire alerts", 19, TEXT, bold=True)],
+                     spacing=8),
+        content=ft.Container(content=ft.Column(body, spacing=6, tight=True, scroll=ft.ScrollMode.AUTO),
+                             width=_w(app, 400)),
+        actions=[ft.TextButton("Dismiss", on_click=dismiss),
+                 primary_button("Acknowledge", acknowledge, icon=ft.Icons.CHECK, color=accent)],
+        actions_alignment=ft.MainAxisAlignment.END,
         inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
     )
     app.page.show_dialog(dlg)
