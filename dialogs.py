@@ -1,4 +1,4 @@
-"""Dialogs: sign up, log in, profile, and the emergency fire-station alert."""
+
 
 import asyncio
 import random
