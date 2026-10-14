@@ -26,6 +26,12 @@ def _zone_dropdown(app, label="Nearest town", value=None, width=None):
     )
 
 
+def _w(app, width):
+    """Dialog width that never exceeds the screen (phones are ~360 px wide)."""
+    page_w = app.page.width or width + 64
+    return max(240, min(width, page_w - 64))
+
+
 def _error_text():
     return ft.Text("", color=EMERGENCY, size=12.5, visible=False)
 
@@ -39,8 +45,9 @@ def _dialog(app, title, body, actions, icon=ft.Icons.LOCAL_FIRE_DEPARTMENT, widt
         modal=True,
         shape=ft.RoundedRectangleBorder(radius=14),
         title=ft.Row([ft.Icon(icon, color=EMERGENCY, size=22), txt(title, 18, TEXT, bold=True)], spacing=8),
-        content=ft.Container(content=ft.Column(body, spacing=12, tight=True, scroll=ft.ScrollMode.AUTO), width=width),
+        content=ft.Container(content=ft.Column(body, spacing=12, tight=True, scroll=ft.ScrollMode.AUTO), width=_w(app, width)),
         actions=actions, actions_alignment=ft.MainAxisAlignment.END,
+        inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
     )
 
 
@@ -173,7 +180,7 @@ def show_emergency(app):
     phone = _field("Mobile number (for call-back)", ft.Icons.PHONE, value=user["phone"] if user else "")
     error = _error_text()
     body = ft.Column(spacing=12, tight=True, scroll=ft.ScrollMode.AUTO)
-    actions = ft.Row(alignment=ft.MainAxisAlignment.END, spacing=8)
+    actions = ft.Row(alignment=ft.MainAxisAlignment.END, spacing=8, wrap=True, run_spacing=4)
 
     def banner(text, color=EMERGENCY, icon=ft.Icons.WARNING_AMBER):
         return ft.Container(
@@ -265,7 +272,8 @@ def show_emergency(app):
         modal=True, shape=ft.RoundedRectangleBorder(radius=14),
         title=ft.Row([ft.Icon(ft.Icons.SOS, color=EMERGENCY, size=26),
                       txt("Emergency alert", 19, EMERGENCY_DARK, bold=True)], spacing=8),
-        content=ft.Container(content=body, width=440),
+        content=ft.Container(content=body, width=_w(app, 440)),
         actions=[actions],
+        inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
     )
     app.page.show_dialog(dlg)

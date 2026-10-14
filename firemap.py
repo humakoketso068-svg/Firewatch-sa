@@ -64,23 +64,32 @@ class FireMap(ft.Container):
             hint_text="Find a place…", width=210, dense=True, text_size=12,
             editable=True, enable_filter=True, on_select=self._on_pick,
         )
+        self.zoom_buttons = [
+            self._btn(ft.Icons.ADD, "Zoom in", lambda e: self.zoom_by(1.5)),
+            self._btn(ft.Icons.REMOVE, "Zoom out", lambda e: self.zoom_by(1 / 1.5)),
+            self._btn(ft.Icons.HOME, "Reset view", lambda e: self.reset_view()),
+            self._btn(ft.Icons.LOCAL_FIRE_DEPARTMENT, "Zoom to active fires",
+                      lambda e: self.focus_fires(), color=EMERGENCY),
+        ]
+        zin, zout, zhome, zfire = self.zoom_buttons
         self.controls_panel = ft.Container(
             content=ft.Column(
                 [
-                    self._btn(ft.Icons.ADD, "Zoom in", lambda e: self.zoom_by(1.5)),
+                    zin,
                     ft.Container(content=self.zoom_label, alignment=ft.Alignment.CENTER, width=40),
-                    self._btn(ft.Icons.REMOVE, "Zoom out", lambda e: self.zoom_by(1 / 1.5)),
+                    zout,
                     ft.Divider(height=1, color=LINE),
-                    self._btn(ft.Icons.HOME, "Reset view", lambda e: self.reset_view()),
-                    self._btn(ft.Icons.LOCAL_FIRE_DEPARTMENT, "Zoom to active fires",
-                              lambda e: self.focus_fires(), color=EMERGENCY),
+                    zhome,
+                    zfire,
                 ],
                 spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             right=10, top=10, bgcolor=PANEL, border=ft.Border.all(1, LINE), border_radius=10,
             padding=ft.Padding.symmetric(vertical=4),
         )
-        self.search_panel = ft.Container(content=self.search, left=10, top=10)
+        self.search_panel = ft.Container(
+            content=self.search, left=10, top=10, bgcolor=PANEL, border_radius=8)
+        self.compact = False
 
         super().__init__(
             content=gestures,
@@ -88,6 +97,22 @@ class FireMap(ft.Container):
             expand=True, clip_behavior=ft.ClipBehavior.HARD_EDGE,
             on_size_change=self._on_size_change,
         )
+
+    def set_compact(self, compact, page_w=1000):
+        """Phone layout: narrower search box, slimmer zoom panel, no percentage readout."""
+        self.compact = compact
+        self.search.width = max(130, min(210, page_w - 130)) if compact else 210
+        self.search.text_size = 12
+        self.zoom_label.visible = not compact
+        self.controls_panel.right = 6 if compact else 10
+        self.controls_panel.top = 6 if compact else 10
+        self.search_panel.left = 6 if compact else 10
+        self.search_panel.top = 6 if compact else 10
+        for b in self.zoom_buttons:
+            b.icon_size = 20
+            b.width = b.height = 36 if compact else 40
+        if self.state is not None:
+            self._redraw()
 
     # -- small helpers ---------------------------------------------------
     @staticmethod
@@ -247,13 +272,23 @@ class FireMap(ft.Container):
         controls = [cv.Canvas(shapes=shapes, left=0, top=0, width=w, height=h)]
 
         # Province names fade out once you are zoomed in close.
+        # Font size follows the map size, and a label is skipped if it would overlap
+        # another province label, so names never pile on top of each other.
         if self.zoom < 3.2:
+            pfont = max(6.0, (6.0 + min(self.zoom, 2.5) * 1.3) * min(1.0, fit + 0.2))
+            taken = []
             for name, lat, lon in PROVINCE_LABELS:
                 px, py = self._pos(*project(lat, lon), scale, ox, oy)
-                if visible(px, py, 60):
-                    controls.append(ft.Container(
-                        content=txt(name.upper(), 8.5 + min(self.zoom, 2.5), PROVINCE_TEXT, bold=True),
-                        left=px - 60, top=py - 7, width=120, alignment=ft.Alignment.CENTER))
+                if not visible(px, py, 60):
+                    continue
+                pw, ph = len(name) * pfont * 0.72, pfont + 4
+                rect = (px - pw / 2, py - ph / 2, px + pw / 2, py + ph / 2)
+                if any(rect[0] < b[2] and rect[2] > b[0] and rect[1] < b[3] and rect[3] > b[1] for b in taken):
+                    continue
+                taken.append(rect)
+                controls.append(ft.Container(
+                    content=txt(name.upper(), pfont, PROVINCE_TEXT, bold=True),
+                    left=px - 60, top=py - ph / 2, width=120, alignment=ft.Alignment.CENTER))
         if self.zoom < 4:
             for name, lat, lon in CONTEXT_LABELS:
                 px, py = self._pos(*project(lat, lon), scale, ox, oy)
@@ -359,7 +394,7 @@ class FireMap(ft.Container):
 
         # Wind compass (bottom-right) and scale bar (bottom-left) stay fixed to the viewport.
         import math
-        wx, wy = w - 38, h - 44
+        wx, wy = (w - 34, h - 40) if self.compact else (w - 38, h - 44)
         controls.append(ft.Container(left=wx - 22, top=wy - 22, width=44, height=44, bgcolor=PANEL,
                                      border=ft.Border.all(1, LINE), border_radius=22))
         controls.append(ft.Container(

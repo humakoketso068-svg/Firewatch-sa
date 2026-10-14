@@ -1,19 +1,4 @@
-"""
-Firewatch: wildfire early-warning console (Flet, pure Python).
 
-Modules
-  simulation.py  the engine (no UI)
-  geo.py         South Africa outline and projection
-  stations.py    fire stations + nearest-station search
-  auth.py        sign up / log in storage
-  firemap.py     interactive zoomable map
-  dialogs.py     sign up, log in, profile and emergency dialogs
-  ui.py          theme colours and small helpers
-
-Run:
-    pip install -r requirements.txt
-    python main.py
-"""
 
 import asyncio
 import os
@@ -155,7 +140,7 @@ class Trend(ft.Container):
         self.color = color
         self.lo = lo
         self.hi = hi
-        self.bars = ft.Row(spacing=2, vertical_alignment=ft.CrossAxisAlignment.END)
+        self.bars = ft.Row(spacing=1, vertical_alignment=ft.CrossAxisAlignment.END, expand=True)
         super().__init__(
             content=ft.Column(
                 [
@@ -163,7 +148,7 @@ class Trend(ft.Container):
                         [self.title, ft.Container(expand=True), self.value],
                         tight=True,
                     ),
-                    ft.Container(content=self.bars, height=65),
+                    ft.Container(content=self.bars, height=65, alignment=ft.Alignment.BOTTOM_LEFT),
                 ],
                 spacing=6,
             ),
@@ -180,7 +165,7 @@ class Trend(ft.Container):
             frac = max(0.08, min(1, (value - self.lo) / span))
             self.bars.controls.append(
                 ft.Container(
-                    width=7,
+                    expand=True,
                     height=round(55 * frac),
                     bgcolor=self.color,
                     border_radius=2,
@@ -224,45 +209,30 @@ class Header(ft.Container):
         self.pill = StatusPill()
         self.toggle_button = ft.OutlinedButton("Public view", on_click=app.toggle_view)
         self.reset_button = ft.OutlinedButton("Reset", on_click=app.reset)
-        self.emergency_button = primary_button(
-            "Emergency", lambda e: dialogs.show_emergency(app), icon=ft.Icons.SOS,
-        )
         # Three-line menu: Log in / Sign up (or profile / log out once signed in).
         self.menu = ft.PopupMenuButton(icon=ft.Icons.MENU, icon_size=24, tooltip="Menu", items=[])
-        self.buttons = ft.Row(alignment=ft.MainAxisAlignment.END, wrap=True)
+        self.buttons = ft.Row(alignment=ft.MainAxisAlignment.END, wrap=True, spacing=8, run_spacing=6,
+                              vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self.subtitle = txt("Live sensor fusion and fire-spread projection, South Africa", 12, DIM)
+        self.title_row = ft.Row(vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=4)
+        self.title_block = ft.Column(
+            [ft.Row([dot(TEXT, 9), txt("Firewatch", 19, TEXT, bold=True)], spacing=8, tight=True),
+             self.subtitle],
+            spacing=2, tight=True, expand=True,
+        )
+        self.compact = False
 
         super().__init__(
             content=ft.ResponsiveRow(
                 [
-                    ft.Container(
-                        col={"xs": 12, "md": 5},
-                        content=ft.Column(
-                            [
-                                ft.Row(
-                                    [
-                                        dot(TEXT, 9),
-                                        txt("Firewatch", 19, TEXT, bold=True),
-                                    ],
-                                    spacing=8,
-                                    tight=True,
-                                ),
-                                txt(
-                                    "Live sensor fusion and fire-spread projection, "
-                                    "South Africa",
-                                    12,
-                                    DIM,
-                                ),
-                            ],
-                            spacing=2,
-                            tight=True,
-                        ),
-                    ),
+                    ft.Container(col={"xs": 12, "md": 5}, content=self.title_row),
                     ft.Container(col={"xs": 12, "md": 7}, content=self.buttons),
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                run_spacing=6,
             ),
             bgcolor=PANEL,
-            padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=14, vertical=10),
             border=ft.Border.only(bottom=ft.BorderSide(1, LINE)),
         )
         self.set_user(None)
@@ -286,10 +256,23 @@ class Header(ft.Container):
                                  on_click=lambda e: (app.set_user(None), app.toast("You have been logged out."))),
             ]
         self.menu.items = items
-        self.buttons.controls = [
-            self.clock, self.pill, self.reset_button, self.toggle_button,
-            self.emergency_button, self.menu,
-        ]
+        self.set_compact(self.compact)
+
+    def set_compact(self, compact):
+        """Phone layout: menu sits next to the title, clock is hidden, buttons are small."""
+        self.compact = compact
+        self.subtitle.visible = not compact
+        self.clock.visible = not compact
+        small = ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12, vertical=0))
+        for b in (self.reset_button, self.toggle_button):
+            b.style = small if compact else None
+        self.buttons.alignment = ft.MainAxisAlignment.START if compact else ft.MainAxisAlignment.END
+        if compact:
+            self.title_row.controls = [self.title_block, self.menu]
+            self.buttons.controls = [self.pill, self.reset_button, self.toggle_button]
+        else:
+            self.title_row.controls = [self.title_block]
+            self.buttons.controls = [self.clock, self.pill, self.reset_button, self.toggle_button, self.menu]
 
 
 # ---------------------------------------------------------------------------
@@ -449,22 +432,37 @@ class FirewatchApp:
         self.public = PublicView()
 
         self.holder = ft.Container(content=self.ops, padding=16)
-
-        page.add(
-            self.header,
-            self.holder,
-            ft.Container(
-                content=txt(
-                    "Simulated demo. Data is generated by a built-in Python simulation "
-                    "for illustration and does not reflect real conditions.",
-                    11,
-                    FAINT,
-                ),
-                alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.only(bottom=10),
+        self.footer = ft.Container(
+            content=txt(
+                "Simulated demo. Data is generated by a built-in Python simulation "
+                "for illustration and does not reflect real conditions.",
+                11, FAINT,
             ),
+            alignment=ft.Alignment.CENTER,
+            padding=ft.Padding.only(left=16, right=16, top=4, bottom=90),   # room for SOS / host badges
         )
+        self.footer.content.text_align = ft.TextAlign.CENTER
 
+        # Floating round SOS button: stays on screen while scrolling, tucked into the
+        # bottom-left corner so it never covers the map's zoom controls, the event
+        # feed or hosting badges that sit bottom-right.
+        page.floating_action_button = ft.FloatingActionButton(
+            content=ft.Column(
+                [ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color="#FFFFFF", size=24),
+                 ft.Text("SOS", size=10, weight=ft.FontWeight.BOLD, color="#FFFFFF")],
+                spacing=0, tight=True, alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=EMERGENCY, shape=ft.CircleBorder(), width=62, height=62,
+            tooltip="Emergency alert", elevation=6,
+            on_click=lambda e: dialogs.show_emergency(self),
+        )
+        page.floating_action_button_location = ft.FloatingActionButtonLocation.START_FLOAT
+
+        page.add(self.header, self.holder, self.footer)
+
+        page.on_resize = self.apply_layout
+        self.apply_layout()
         self.refresh()
         page.run_task(self.timer_loop)
 
@@ -490,7 +488,7 @@ class FirewatchApp:
         )
 
         self.zone_list = ZoneList()
-        zones_panel = card(
+        self.zones_panel = zones_panel = card(
             ft.Column(
                 [
                     txt("Zones by risk", 13, TEXT, bold=True),
@@ -505,14 +503,16 @@ class FirewatchApp:
 
         self.map = FireMap()
         self.map_panel_meta = txt("", 11, FAINT)
-        map_panel = card(
+        self.map_hint = txt(
+            "Pinch or use + / − to zoom, drag to pan, or search for a place. "
+            "Rings show the simulated evacuation advisory radius.", 11, FAINT)
+        self.map_panel = map_panel = card(
             ft.Column(
                 [
                     ft.Row(
                         [txt("South Africa sensor map", 13, TEXT, bold=True),
                          ft.Container(expand=True), self.map_panel_meta,
-                         primary_button("Emergency", lambda e: dialogs.show_emergency(self),
-                                        icon=ft.Icons.SOS)]
+                        ]
                     ),
                     self.map,
                     ft.Row(
@@ -523,14 +523,9 @@ class FirewatchApp:
                             ft.Row([dot(RISK["extreme"]), txt("Extreme", 11.5, DIM)], spacing=5),
                             ft.Row([dot(CONTAINED), txt("Contained", 11.5, DIM)], spacing=5),
                         ],
-                        wrap=True,
+                        wrap=True, spacing=12, run_spacing=4,
                     ),
-                    txt(
-                        "Scroll, pinch or use + / − to zoom, drag to pan, or search for a place. "
-                        "Rings show the simulated evacuation advisory radius.",
-                        11,
-                        FAINT,
-                    ),
+                    self.map_hint,
                 ],
                 spacing=8,
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
@@ -541,7 +536,7 @@ class FirewatchApp:
         )
 
         self.feed_list = FeedList()
-        feed_panel = card(
+        self.feed_panel = feed_panel = card(
             ft.Column(
                 [
                     txt("Event feed", 13, TEXT, bold=True),
@@ -570,7 +565,10 @@ class FirewatchApp:
             ft.Column(
                 [
                     txt(f"Environmental trends, last {MAX_HISTORY} readings", 13, TEXT, bold=True),
-                    ft.Row([self.tr_wind, self.tr_moist], spacing=24),
+                    ft.ResponsiveRow(
+                        [ft.Container(self.tr_wind, col={"xs": 12, "sm": 6}),
+                         ft.Container(self.tr_moist, col={"xs": 12, "sm": 6})],
+                        spacing=16, run_spacing=10),
                 ],
                 spacing=10,
             ),
@@ -581,6 +579,29 @@ class FirewatchApp:
             [stats, main_grid, trends],
             spacing=14,
         )
+
+    def apply_layout(self, e=None):
+        """Adapt sizes to the screen: phone (<600), tablet (<1000) or desktop."""
+        w = self.page.width or 1000
+        h = self.page.height or 800
+        phone, tablet = w < 600, w < 1000
+        self.phone = phone
+
+        self.holder.padding = 10 if phone else 16
+        self.header.set_compact(phone)
+        # Phones: let the map be tall and square-ish; lists get a shorter fixed height so
+        # the page scrolls instead of trapping the finger inside nested lists.
+        map_h = max(380, min(560, int(h * 0.62))) if phone else 480
+        side_h = 300 if phone else (380 if tablet else 480)
+        self.map_panel.height = map_h + 90 if phone else map_h     # + title row and legend
+        self.zones_panel.height = side_h
+        self.feed_panel.height = side_h
+        self.map_hint.visible = not phone
+        self.map.set_compact(phone, w)
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
     def stop(self, e=None):
         self.running = False
