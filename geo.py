@@ -83,9 +83,10 @@ PROVINCE_LABELS = [
     ("Eastern Cape", -32.4, 26.4),
     ("Free State", -28.6, 26.2),
     ("KwaZulu-Natal", -28.6, 30.6),
-    ("North West", -26.3, 25.5),
+    ("North West", -26.4, 25.4),
+    ("Gauteng", -26.45, 28.55),
     ("Mpumalanga", -25.9, 30.3),
-    ("Limpopo", -23.6, 29.4),
+    ("Limpopo", -23.3, 28.4),
 ]
 
 # Places whose name is printed on the map (the rest show as plain nodes
