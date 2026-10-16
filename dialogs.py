@@ -6,15 +6,22 @@ import random
 import flet as ft
 
 import auth
-from stations import eta_minutes, nearby_stations
+import reports
+from stations import distance_km, eta_minutes, nearby_stations
 from ui import (
     DIM, EMERGENCY, EMERGENCY_DARK, FAINT, INFO_BLUE, LINE, LINE_SOFT, RISK, TEXT,
-    chip, primary_button, txt,
+    primary_button, txt,
 )
 
 
 def _field(label, icon, **kw):
     return ft.TextField(label=label, prefix_icon=icon, dense=True, border_radius=8, text_size=14, **kw)
+
+
+def _width(app, wanted):
+    """Dialog width that never exceeds the screen (phones are ~360 px wide)."""
+    page_w = getattr(app.page, "width", None) or 1000
+    return max(240, min(wanted, page_w - 72))
 
 
 def _zone_dropdown(app, label="Nearest town", value=None, width=None):
@@ -26,10 +33,19 @@ def _zone_dropdown(app, label="Nearest town", value=None, width=None):
     )
 
 
-def _w(app, width):
-    """Dialog width that never exceeds the screen (phones are ~360 px wide)."""
-    page_w = app.page.width or width + 64
-    return max(240, min(width, page_w - 64))
+ALERT_OPTIONS = [("off", "Off"), ("email", "Email"), ("sms", "SMS (text message)"), ("both", "Email and SMS")]
+
+
+def _alerts_dropdown(value="off"):
+    return ft.Dropdown(
+        label="Fire alerts for my town", value=value or "off", dense=True, border_radius=8, text_size=14,
+        leading_icon=ft.Icons.NOTIFICATIONS_ACTIVE,
+        options=[ft.DropdownOption(key=k, text=t) for k, t in ALERT_OPTIONS],
+    )
+
+
+ALERT_NOTE = ("Alerts store your email, number and town on our server so we can message you "
+              "when a satellite sees a fire near your town. Choose Off any time.")
 
 
 def _error_text():
@@ -45,9 +61,8 @@ def _dialog(app, title, body, actions, icon=ft.Icons.LOCAL_FIRE_DEPARTMENT, widt
         modal=True,
         shape=ft.RoundedRectangleBorder(radius=14),
         title=ft.Row([ft.Icon(icon, color=EMERGENCY, size=22), txt(title, 18, TEXT, bold=True)], spacing=8),
-        content=ft.Container(content=ft.Column(body, spacing=12, tight=True, scroll=ft.ScrollMode.AUTO), width=_w(app, width)),
+        content=ft.Container(content=ft.Column(body, spacing=12, tight=True, scroll=ft.ScrollMode.AUTO), width=_width(app, width)),
         actions=actions, actions_alignment=ft.MainAxisAlignment.END,
-        inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
     )
 
 
@@ -87,6 +102,7 @@ def show_signup(app):
     email = _field("Email", ft.Icons.EMAIL)
     phone = _field("Mobile number", ft.Icons.PHONE, hint_text="082 123 4567")
     town = _zone_dropdown(app)
+    alerts = _alerts_dropdown("off")
     password = _field("Password (min. 8 characters)", ft.Icons.LOCK, password=True, can_reveal_password=True)
     confirm = _field("Confirm password", ft.Icons.LOCK, password=True, can_reveal_password=True)
     consent = ft.Checkbox(
@@ -101,7 +117,8 @@ def show_signup(app):
             _show_error(error, "Passwords do not match.")
             app.page.update()
             return
-        user, err = auth.register(name.value, email.value, phone.value, town.value, password.value, consent.value)
+        user, err = auth.register(name.value, email.value, phone.value, town.value, password.value, consent.value,
+                                  alerts.value or "off")
         if err:
             _show_error(error, err)
             app.page.update()
@@ -114,7 +131,7 @@ def show_signup(app):
     dlg = _dialog(
         app, "Create your account",
         [txt("Your details let fire stations reach you and show you alerts for your area.", 12.5, DIM),
-         name, email, phone, town, password, confirm, consent, error,
+         name, email, phone, town, alerts, txt(ALERT_NOTE, 11, FAINT), password, confirm, consent, error,
          ft.TextButton("Already have an account? Log in", on_click=lambda e: (app.page.pop_dialog(), show_login(app)))],
         [ft.TextButton("Cancel", on_click=lambda e: app.page.pop_dialog()),
          primary_button("Create account", submit)],
@@ -128,10 +145,13 @@ def show_profile(app):
     name = _field("Full name", ft.Icons.PERSON, value=user["name"])
     phone = _field("Mobile number", ft.Icons.PHONE, value=user["phone"])
     town = _zone_dropdown(app, value=user["home_zone_id"])
+    alerts = _alerts_dropdown(user.get("alerts", "off"))
+    info = txt("", 12, DIM)
+    info.visible = False
     error = _error_text()
 
     def save(e=None):
-        updated, err = auth.update_profile(user["email"], name.value, phone.value, town.value)
+        updated, err = auth.update_profile(user["email"], name.value, phone.value, town.value, alerts.value or "off")
         if err:
             _show_error(error, err)
             app.page.update()
@@ -140,6 +160,21 @@ def show_profile(app):
         app.set_user(updated)
         app.toast("Profile updated.")
 
+    async def run_test():
+        info.value, info.visible = "Sending a test alert…", True
+        app.page.update()
+        import alerts as alert_service
+        message = await asyncio.to_thread(alert_service.send_test, dict(app.user))
+        info.value = message
+        app.page.update()
+
+    def test_alert(e=None):
+        if app.is_browser_build():
+            info.value, info.visible = "Alerts need the server version of Firewatch.", True
+            app.page.update()
+            return
+        app.page.run_task(run_test)
+
     def sign_out(e):
         app.page.pop_dialog()
         app.set_user(None)
@@ -147,7 +182,8 @@ def show_profile(app):
 
     dlg = _dialog(
         app, "Your profile",
-        [txt(user["email"], 12.5, DIM), name, phone, town, error],
+        [txt(user["email"], 12.5, DIM), name, phone, town, alerts, txt(ALERT_NOTE, 11, FAINT),
+         ft.TextButton("Send me a test alert", icon=ft.Icons.SEND, on_click=test_alert), info, error],
         [ft.TextButton("Log out", on_click=sign_out, style=ft.ButtonStyle(color=EMERGENCY)),
          ft.TextButton("Cancel", on_click=lambda e: app.page.pop_dialog()),
          primary_button("Save", save, color=INFO_BLUE)],
@@ -202,7 +238,7 @@ def show_emergency(app):
         ]
         actions.controls = [
             ft.TextButton("Cancel", on_click=lambda e: app.page.pop_dialog()),
-            primary_button("Alert all nearby fire stations", start, icon=ft.Icons.SOS),
+            primary_button("Alert fire stations", start, icon=ft.Icons.SOS),
         ]
 
     def start(e=None):
@@ -272,84 +308,56 @@ def show_emergency(app):
         modal=True, shape=ft.RoundedRectangleBorder(radius=14),
         title=ft.Row([ft.Icon(ft.Icons.SOS, color=EMERGENCY, size=26),
                       txt("Emergency alert", 19, EMERGENCY_DARK, bold=True)], spacing=8),
-        content=ft.Container(content=body, width=_w(app, 440)),
+        content=ft.Container(content=body, width=_width(app, 440)),
         actions=[actions],
-        inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
     )
     app.page.show_dialog(dlg)
 
 
 # ---------------------------------------------------------------------------
-# Fire-detected alert popup (Acknowledge / Dismiss)
+# Citizen report
 # ---------------------------------------------------------------------------
 
-def show_fire_alert(app, fires):
-    """Popup shown when the sensor network detects new fire(s).
-
-    Acknowledge: records it in the event feed and zooms the map to the fire.
-    Dismiss:     just closes the popup.
-    """
-    many = len(fires) > 1
-    worst = max(fires, key=lambda f: ("low", "moderate", "high", "extreme").index(f["severity"]))
-    accent = RISK.get(worst["severity"], EMERGENCY)
+def show_report(app, lat, lon):
+    user = app.user
+    near = min(app.sim.zones, key=lambda z: distance_km(lat, lon, z["lat"], z["lon"]))
+    km = distance_km(lat, lon, near["lat"], near["lon"])
+    kind = ft.Dropdown(
+        label="What can you see?", value="smoke", dense=True, border_radius=8, text_size=14,
+        options=[ft.DropdownOption(key=k, text=v) for k, v in reports.KINDS.items()],
+    )
+    note = ft.TextField(
+        label="Details (optional)", multiline=True, min_lines=2, max_lines=3, max_length=reports.MAX_NOTE,
+        border_radius=8, text_size=14, hint_text="e.g. Thick smoke on the hill, blowing towards the farms",
+    )
+    error = _error_text()
 
     def close(e=None):
-        app.alert_showing = False
+        app.map.pending_pin = None
+        app._redraw_map()
         app.page.pop_dialog()
 
-    def dismiss(e=None):
+    async def send():
+        send_button.disabled = True
+        app.page.update()
+        row, err = await asyncio.to_thread(reports.add_report, user, lat, lon, kind.value, note.value)
+        if err:
+            _show_error(error, err)
+            send_button.disabled = False
+            app.page.update()
+            return
         close()
+        await app.pull_reports_now()
+        app.toast("Thank you. Your report is on the map for 24 hours. In an emergency, dial 112.")
 
-    def acknowledge(e=None):
-        who = app.user["name"] if app.user else "Operator"
-        places = ", ".join(f["zone_name"].split(" (")[0] for f in fires[:3])
-        more = f" +{len(fires) - 3} more" if len(fires) > 3 else ""
-        app.sim.log_event("info", "Alert", f"[b]{who}[/b] acknowledged fire alert: {places}{more}.")
-        close()
-        if not many:
-            app.map.focus_on(fires[0]["x"], fires[0]["y"], 3.0)
-        else:
-            app.map.focus_fires()
-        app.refresh()
-        app.toast("Alert acknowledged.")
-
-    def row(f):
-        place = f["zone_name"].split(" (")[0]
-        color = RISK.get(f["severity"], EMERGENCY)
-        return ft.Container(
-            content=ft.Row(
-                [ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color=color, size=22),
-                 ft.Column([txt(f"{place}, {f['province']}", 13.5, TEXT, bold=True),
-                            txt(f"Detected {f['ts']}", 11.5, DIM)], spacing=1, tight=True, expand=True),
-                 chip(f["severity"], color)],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
-            padding=ft.Padding.symmetric(vertical=7),
-            border=ft.Border.only(bottom=ft.BorderSide(1, LINE_SOFT)),
-        )
-
-    if many:
-        msg = (f"{len(fires)} new smoke/heat signatures were confirmed by the sensor network. "
-               "Ground crews should be alerted.")
-    else:
-        f = fires[0]
-        msg = (f"New smoke/heat signature confirmed at {f['zone_name'].split(' (')[0]}, "
-               f"{f['province']} \u2014 risk level {f['severity'].upper()}.")
-
-    body = [txt(msg, 13, TEXT), *[row(f) for f in fires[:4]]]
-    if len(fires) > 4:
-        body.append(txt(f"+ {len(fires) - 4} more", 12, DIM))
-
-    dlg = ft.AlertDialog(
-        modal=True,
-        shape=ft.RoundedRectangleBorder(radius=14),
-        title=ft.Row([ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=accent, size=26),
-                      txt("Fire alert" if not many else f"{len(fires)} fire alerts", 19, TEXT, bold=True)],
-                     spacing=8),
-        content=ft.Container(content=ft.Column(body, spacing=6, tight=True, scroll=ft.ScrollMode.AUTO),
-                             width=_w(app, 400)),
-        actions=[ft.TextButton("Dismiss", on_click=dismiss),
-                 primary_button("Acknowledge", acknowledge, icon=ft.Icons.CHECK, color=accent)],
-        actions_alignment=ft.MainAxisAlignment.END,
-        inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
+    send_button = primary_button("Send report", lambda e: app.page.run_task(send), color=INFO_BLUE)
+    dlg = _dialog(
+        app, "Report smoke or fire",
+        [txt(f"Pin placed about {km:.0f} km from {near['name'].split(' (')[0]}, {near['province']}.", 12.5, DIM),
+         kind, note, error,
+         txt("Reports are public and unverified, and show your first name. This does not alert "
+             "fire crews. In an emergency use the SOS button or call 112.", 11, FAINT)],
+        [ft.TextButton("Cancel", on_click=close), send_button],
+        icon=ft.Icons.ADD_LOCATION_ALT,
     )
     app.page.show_dialog(dlg)

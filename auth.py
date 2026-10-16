@@ -101,7 +101,10 @@ def valid_phone(phone):
     return bool(PHONE_RE.match(clean_phone(phone)))
 
 
-def register(name, email, phone, home_zone_id, password, consent):
+ALERT_MODES = ('off', 'email', 'sms', 'both')
+
+
+def register(name, email, phone, home_zone_id, password, consent, alerts='off'):
     """Returns (user, error). Exactly one of the two is None."""
     name, email = (name or "").strip(), (email or "").strip().lower()
     if len(name) < 2:
@@ -125,6 +128,7 @@ def register(name, email, phone, home_zone_id, password, consent):
     users[email] = {
         "name": name, "email": email, "phone": clean_phone(phone),
         "home_zone_id": home_zone_id, "consent": True,
+        "alerts": alerts if alerts in ALERT_MODES else "off",
         "salt": salt, "iters": iters, "hash": _hash(password, salt, iters),
     }
     _save(users)
@@ -141,7 +145,7 @@ def login(email, password):
     return _public(user), None
 
 
-def update_profile(email, name, phone, home_zone_id):
+def update_profile(email, name, phone, home_zone_id, alerts=None):
     name = (name or "").strip()
     if len(name) < 2:
         return None, "Please enter your full name."
@@ -152,5 +156,7 @@ def update_profile(email, name, phone, home_zone_id):
     if not user:
         return None, "Account not found."
     user.update(name=name, phone=clean_phone(phone), home_zone_id=home_zone_id)
+    if alerts in ALERT_MODES:
+        user['alerts'] = alerts
     _save(users)
     return _public(user), None

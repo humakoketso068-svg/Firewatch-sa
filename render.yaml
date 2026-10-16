@@ -3,8 +3,29 @@ services:
     name: firewatch
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    # requirements.txt holds only flet, so the same file also works for `flet build web`.
+    buildCommand: pip install -r requirements.txt flet-web==1.0.4
     startCommand: python main.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
+      # Secrets: Render asks you for these in the dashboard (sync: false = not stored in git).
+      # Leave any you don't need empty; that feature simply stays off.
+      - key: FIRMS_MAP_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false

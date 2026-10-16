@@ -137,6 +137,7 @@ class Simulation:
         self.feed = []
         self.tick_count = 0
         self.fire_id_seq = 1
+        self.live_mode = False      # True: fires come from NASA FIRMS, not the simulation
 
         # seed some history so the first snapshot isn't empty
         for _ in range(20):
@@ -196,6 +197,8 @@ class Simulation:
             self.moist_history.pop(0)
 
     def _maybe_ignite(self):
+        if self.live_mode:
+            return
         for z in self.zones:
             if z["on_fire"]:
                 continue
@@ -250,8 +253,39 @@ class Simulation:
     def tick(self):
         self.tick_count += 1
         self._step_environment()
+        if self.live_mode:
+            return                      # real fires are pushed in by set_live_fires()
         self._maybe_ignite()
         self._step_fires()
+
+    # -- live (NASA FIRMS) mode ------------------------------------------
+    def set_live(self, flag):
+        """Switch between simulated fires and real satellite detections."""
+        self.live_mode = bool(flag)
+        self.fires = []
+        for z in self.zones:
+            z["on_fire"] = False
+
+    def set_live_fires(self, clusters):
+        """clusters come from firms.cluster(): one entry per town with hotspots near it."""
+        by_id = {z["id"]: z for z in self.zones}
+        for z in self.zones:
+            z["on_fire"] = False
+        fires = []
+        for i, c in enumerate(clusters, start=1):
+            x, y = project(c["lat"], c["lon"])
+            n, power = c["count"], c["frp_sum"]
+            severity = "extreme" if (n >= 8 or power >= 300) else "high" if (n >= 3 or power >= 80) else "moderate"
+            radius = 3.0 + min(n, 15) * 0.9
+            fires.append({
+                "id": i, "zone_id": c["zone_id"], "zone_name": c["zone_name"], "province": c["province"],
+                "x": x, "y": y, "start_tick": self.tick_count,
+                "radius": radius, "max_radius": radius,
+                "wind_dir_at_start": self.wind_dir, "severity": severity,
+                "contained": False, "contain_tick": None,
+            })
+            by_id[c["zone_id"]]["on_fire"] = True
+        self.fires = fires
 
     def snapshot(self):
         top_zone = max(self.zones, key=lambda z: z["risk"])

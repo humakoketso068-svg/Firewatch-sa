@@ -32,6 +32,7 @@ MAP_LINE = "#E3E7EA"
 LAND = "#E4EAE5"
 LAND_EDGE = "#9FAAA3"
 PROVINCE_TEXT = "#A3ACB3"
+HOTSPOT = "#E8590C"          # NASA satellite hotspot
 
 FEED_COLOR = {
     "extreme": RISK["extreme"],
@@ -48,6 +49,19 @@ COMPASS = [
 
 def compass_dir(deg):
     return COMPASS[int(round(deg / 22.5)) % 16]
+
+
+def age_text(ts):
+    """'12 min ago', '3 h ago' for an epoch timestamp."""
+    import time
+    secs = max(0, time.time() - ts)
+    if secs < 90:
+        return "just now"
+    if secs < 5400:
+        return f"{round(secs / 60)} min ago"
+    if secs < 172800:
+        return f"{round(secs / 3600)} h ago"
+    return f"{round(secs / 86400)} days ago"
 
 
 def txt(value, size=13, color=DIM, bold=False, font_family=None):
