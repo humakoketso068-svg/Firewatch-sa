@@ -73,6 +73,33 @@ alter table alert_log enable row level security;
 - Real offline use is limited: the app is server-rendered, so it needs a connection to open. (A
   fully offline version would be a separate static build.)
 
+## 5. Real place names and exact coordinates (townships, villages, rural areas)
+The map ships with 83 sensor towns. To search and label **every** named place in all nine
+provinces, build the place list once on your own computer (it needs internet):
+
+```
+python build_places.py
+```
+
+It downloads the free GeoNames gazetteer for South Africa and writes `places.json` next to
+`main.py` (a few MB). It prints how many places it found per province and checks a few names
+(for example Lerome). Then commit `places.json` with the rest of the project.
+
+What you get:
+- **Search box:** type a town, township or village (Enter picks the first match). Results show
+  the province and exact coordinates, and the map zooms there.
+- **Labels:** zoom in past about 400% and real place names appear, biggest first, without overlapping.
+- **Tap the map** (zoomed in): a card shows the nearest named place, its province, exact
+  coordinates, and the nearest sensor town. "Report smoke or fire here" sends a report for that spot.
+- **Reports:** the report dialog now names the nearest real place and shows the coordinates.
+
+Notes:
+- GeoNames is community data. Some rural settlements are missing or slightly off. Please check
+  places that matter to you. Data licence: CC BY 4.0 (the app footer credits GeoNames).
+- Without `places.json` everything else still works and search covers the 83 sensor towns only.
+- `python build_places.py --min-pop 500` keeps only places with 500+ people (smaller file).
+- It also works on the Netlify build, because it needs no server, but it makes the first load bigger.
+
 ## Deploy
 Push to GitHub, then Render > New > Blueprint (reads `render.yaml`) and fill in the secrets it asks for.
 After changing environment variables, Render restarts the service by itself.

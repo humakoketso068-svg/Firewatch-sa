@@ -9,13 +9,15 @@ import time
 import flet as ft
 import flet.canvas as cv
 
+import places
+
 from geo import (
     ESWATINI, LABELLED, LAT_MIN, LESOTHO, LON_MIN, PAD_X, PAD_Y, PROVINCE_LABELS,
     PX_PER_LAT, PX_PER_LON, SA_OUTLINE, VIEW_H, VIEW_W, project,
 )
 from ui import (
     CONTAINED, DIM, EMERGENCY, FAINT, INFO_BLUE, LAND, LAND_EDGE, LINE, MAP_BG,
-    PANEL, PROVINCE_TEXT, RISK, TEXT, WIND, txt, HOTSPOT, age_text,
+    PANEL, PROVINCE_TEXT, RISK, TEXT, WIND, txt, HOTSPOT, age_text, fmt_coord,
 )
 
 # Neighbouring countries and oceans, as (name, lat, lon).
@@ -55,6 +57,9 @@ class FireMap(ft.Container):
         self.light = False            # data-saver: fewer labels and effects
         self.on_pin = None            # callback(lat, lon)
         self.on_report_click = None
+        self.on_report_here = None    # callback(lat, lon)
+        self.selected = None          # place or spot shown in the coordinate card
+        self._results = []
         self._view = (1.0, 0.0, 0.0)  # (scale, ox, oy) of the last draw, for tap -> lat/lon
 
         self.map_stack = ft.Stack(
@@ -67,13 +72,19 @@ class FireMap(ft.Container):
             on_scale_start=self._on_scale_start,
             on_scale_update=self._on_scale_update,
             on_double_tap_down=self._on_double_tap_down,
-            on_tap_down=self._on_tap_down,
+            on_tap_up=self._on_tap_up,
         )
 
         self.zoom_label = txt("100%", 10.5, DIM, bold=True)
-        self.search = ft.Dropdown(
-            hint_text="Find a place…", width=210, dense=True, text_size=12,
-            editable=True, enable_filter=True, on_select=self._on_pick,
+        self.search = ft.TextField(
+            hint_text="Find a town, township or village…", width=210, dense=True, text_size=12,
+            border_radius=8, prefix_icon=ft.Icons.SEARCH, bgcolor=PANEL,
+            on_change=self._on_search_change, on_submit=self._on_search_submit,
+        )
+        self.results = ft.Column(spacing=0, tight=True)
+        self.results_panel = ft.Container(
+            content=self.results, left=10, top=52, width=210, visible=False, bgcolor=PANEL,
+            border=ft.Border.all(1, LINE), border_radius=8, padding=ft.Padding.symmetric(vertical=4),
         )
         self.controls_panel = ft.Container(
             content=ft.Column(
@@ -203,20 +214,100 @@ class FireMap(ft.Container):
         y = VIEW_H - (py - oy) / scale
         return LAT_MIN + (y - PAD_Y) / PX_PER_LAT, LON_MIN + (x - PAD_X) / PX_PER_LON
 
-    def _on_tap_down(self, e):
-        if not self.pin_mode:
-            return
+    def _on_tap_up(self, e):
         lat, lon = self.screen_to_latlon(e.local_position.x, e.local_position.y)
-        self.pin_mode = False
-        self.pending_pin = (lat, lon)
-        self._redraw()
-        if self.on_pin:
-            self.on_pin(lat, lon)
+        if self.pin_mode:                                   # placing a citizen-report pin
+            self.pin_mode = False
+            self.pending_pin = (lat, lon)
+            self._redraw()
+            if self.on_pin:
+                self.on_pin(lat, lon)
+            return
+        if self.zoom >= 2.5:                                # tap = "what is here?"
+            self.selected = self._describe(lat, lon)
+            self._redraw()
 
-    def _on_pick(self, e):
-        zone = next((z for z in (self.state or {}).get("zones", []) if z["id"] == e.control.value), None)
-        if zone:
-            self.focus_on(zone["x"], zone["y"], 5.0)
+    # -- place search and the coordinate card ---------------------------------
+    def _nearest_zone(self, lat, lon):
+        best, best_km = None, 1e9
+        for zone in (self.state or {}).get("zones", []):
+            km = places.distance_km(lat, lon, zone["lat"], zone["lon"])
+            if km < best_km:
+                best, best_km = zone, km
+        return best, best_km
+
+    def _spot_tip(self, spot):
+        where = places.where(spot["lat"], spot["lon"])
+        head = "NASA hotspot" + (f" · {where}" if where else "")
+        return (f'{head}\n{fmt_coord(spot["lat"], spot["lon"])}\n'
+                f'{spot["conf"]} confidence · {spot["frp"]:.0f} MW · {age_text(spot["ts"])}')
+
+    def _describe(self, lat, lon, name=None, province=None):
+        near, km = places.nearest(lat, lon, 30)
+        zone, zkm = self._nearest_zone(lat, lon)
+        note = None
+        if name is None:
+            if near and km <= 2.5:
+                name, province = near["name"], near["province"]
+            else:
+                name = "Selected spot"
+                province = near["province"] if near else (zone["province"] if zone else "")
+                if near:
+                    note = f'Nearest named place: {near["name"]}, {km:.0f} km away'
+        sensor = f'Nearest sensor town: {short_name(zone["name"])}, {zkm:.0f} km away' if zone else None
+        return {"name": name, "province": province or "", "lat": lat, "lon": lon, "note": note, "sensor": sensor}
+
+    def _clear_selected(self, e=None):
+        self.selected = None
+        self._redraw()
+
+    def _on_search_change(self, e):
+        self._show_results(" ".join((self.search.value or "").lower().split()))
+
+    def _on_search_submit(self, e):
+        if self._results:
+            self._choose(self._results[0])
+
+    def _show_results(self, q):
+        rows = []
+        if len(q) >= 2:
+            for zone in (self.state or {}).get("zones", []):      # the sensor towns first
+                name = short_name(zone["name"])
+                if name.lower().startswith(q):
+                    rows.append({"name": name, "province": zone["province"], "lat": zone["lat"], "lon": zone["lon"]})
+            seen = {(r["name"].lower(), r["province"]) for r in rows}
+            for p in places.search(q, 8):
+                if (p["name"].lower(), p["province"]) not in seen:
+                    rows.append(p)
+            rows = rows[:8]
+        self._results = rows
+        items = [
+            ft.Container(
+                content=ft.Column([
+                    txt(r["name"], 12.5, TEXT, bold=True),
+                    txt(f'{r["province"]} · {fmt_coord(r["lat"], r["lon"])}', 10.5, DIM),
+                ], spacing=0, tight=True),
+                padding=ft.Padding.symmetric(horizontal=10, vertical=5), ink=True,
+                on_click=lambda e, r=r: self._choose(r))
+            for r in rows
+        ]
+        if len(q) >= 2 and not rows:
+            hint = ("No match. Try another spelling." if places.available() else
+                    "Place database not installed yet, so only the sensor towns can be searched.")
+            items.append(ft.Container(content=txt(hint, 11.5, DIM), padding=10))
+        self.results.controls = items
+        self.results_panel.visible = bool(items)
+        try:
+            self.results_panel.update()
+        except Exception:
+            self._redraw()
+
+    def _choose(self, r):
+        self.search.value = r["name"]
+        self.results_panel.visible = False
+        self.selected = self._describe(r["lat"], r["lon"], name=r["name"], province=r["province"])
+        x, y = project(r["lat"], r["lon"])
+        self.focus_on(x, y, 6.0)
 
     def _on_hover(self, e):
         self._ptr = (e.local_position.x, e.local_position.y)
@@ -250,7 +341,8 @@ class FireMap(ft.Container):
         if abs(e.width - self.avail_w) < 1 and abs(e.height - self.avail_h) < 1:
             return
         self.avail_w, self.avail_h = e.width, e.height
-        self.search.width = max(120, min(210, e.width - 76))
+        self.search.width = max(120, min(250, e.width - 76))
+        self.results_panel.width = self.search.width
         self._redraw()
 
     # -- drawing -----------------------------------------------------------
@@ -262,20 +354,9 @@ class FireMap(ft.Container):
             cv.Path(path, ft.Paint(color=LAND_EDGE, style=ft.PaintingStyle.STROKE, stroke_width=1.2)),
         ]
 
-    def _setup_search(self, zones):
-        if self._search_ready:
-            return
-        ordered = sorted(zones, key=lambda z: (z["province"], z["name"]))
-        self.search.options = [
-            ft.DropdownOption(key=z["id"], text=f'{short_name(z["name"])}, {z["province"]}')
-            for z in ordered
-        ]
-        self._search_ready = True
-
     def render(self, state):
         self.state = state
         self._sync_gestures()
-        self._setup_search(state["zones"])
         w, h = self.avail_w, self.avail_h
         fit = self.fit
         scale = fit * self.zoom
@@ -371,7 +452,7 @@ class FireMap(ft.Container):
                 controls.append(ft.Container(
                     left=hx - hs_size / 2, top=hy - hs_size / 2, width=hs_size, height=hs_size,
                     bgcolor=HOTSPOT, border=ft.Border.all(0.8, "#FFFFFF"), border_radius=hs_size / 2,
-                    tooltip=f'NASA hotspot · {spot["conf"]} confidence · {spot["frp"]:.0f} MW · {age_text(spot["ts"])}'))
+                    tooltip=self._spot_tip(spot)))
 
         # Sensor nodes + collision-free labels
         placed = []                                      # occupied rectangles (x0, y0, x1, y1)
@@ -417,6 +498,40 @@ class FireMap(ft.Container):
                         left=rect[0], top=rect[1], width=lw, alignment=ft.Alignment.CENTER))
                     break
 
+        # Real place names (townships, villages, rural settlements) once you zoom in
+        if self.zoom >= 4.0 and places.available():
+            south, west = self.screen_to_latlon(0, h)
+            north, east = self.screen_to_latlon(w, 0)
+            zone_names = {short_name(z["name"]).lower() for z in state["zones"]}
+            cap = 35 if self.light else 80
+            pfont = 8.5 + min(self.zoom - 4.0, 3.0) * 0.3
+            shown = 0
+            for pl in places.in_view(south, west, north, east, limit=cap * 3):
+                if shown >= cap:
+                    break
+                if pl["name"].lower() in zone_names:
+                    continue
+                qx, qy = self._pos(*project(pl["lat"], pl["lon"]), scale, ox, oy)
+                if not visible(qx, qy, 4):
+                    continue
+                placed.append((qx - 3, qy - 3, qx + 3, qy + 3))      # the dot always shows; labels dodge it
+                shown += 1
+                controls.append(ft.Container(
+                    left=qx - 2.5, top=qy - 2.5, width=5, height=5, bgcolor="#6B7680", border_radius=2.5,
+                    tooltip=f'{pl["name"]}, {pl["province"]}\n{fmt_coord(pl["lat"], pl["lon"])}'))
+                lw, lh = len(pl["name"]) * pfont * 0.56 + 6, pfont + 4
+                for rect in (
+                    (qx + 5, qy - lh / 2, qx + 5 + lw, qy + lh / 2),               # right
+                    (qx - 5 - lw, qy - lh / 2, qx - 5, qy + lh / 2),               # left
+                    (qx - lw / 2, qy + 4, qx + lw / 2, qy + 4 + lh),               # below
+                ):
+                    if free(rect):
+                        placed.append(rect)
+                        controls.append(ft.Container(
+                            content=txt(pl["name"], pfont, "#4B545C"),
+                            left=rect[0], top=rect[1], width=lw, alignment=ft.Alignment.CENTER))
+                        break
+
         # Signed-in user's home marker
         home = next((z for z in state["zones"] if z["id"] == self.user_zone_id), None)
         if home:
@@ -436,7 +551,8 @@ class FireMap(ft.Container):
             if not visible(rx, ry, 16):
                 continue
             size = max(20, 24 * ms)
-            tip = f'{r["kind_label"]} · {age_text(r["ts"])}' + (f'\n{r["note"]}' if r["note"] else "")
+            tip = (f'{r["kind_label"]} · {age_text(r["ts"])}' + (f'\n{r["note"]}' if r["note"] else "")
+                   + f'\n{fmt_coord(r["lat"], r["lon"])}')
             controls.append(ft.Container(
                 content=ft.Icon(ft.Icons.LOCATION_ON, color=INFO_BLUE, size=size),
                 left=rx - size / 2, top=ry - size, width=size, height=size, tooltip=tip))
@@ -445,6 +561,33 @@ class FireMap(ft.Container):
             controls.append(ft.Container(
                 content=ft.Icon(ft.Icons.PLACE, color=EMERGENCY, size=30),
                 left=qx - 15, top=qy - 30, width=30, height=30))
+        if self.selected:
+            sel = self.selected
+            sx_, sy_ = self._pos(*project(sel["lat"], sel["lon"]), scale, ox, oy)
+            if visible(sx_, sy_, 16):
+                controls.append(ft.Container(
+                    content=ft.Icon(ft.Icons.PLACE, color="#7C3AED", size=32),
+                    left=sx_ - 16, top=sy_ - 32, width=32, height=32))
+            lines = [
+                ft.Row([ft.Icon(ft.Icons.PLACE, color="#7C3AED", size=18),
+                        ft.Container(content=txt(sel["name"], 13, TEXT, bold=True), expand=True),
+                        ft.IconButton(icon=ft.Icons.CLOSE, icon_size=16, on_click=self._clear_selected)],
+                       spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                txt(sel["province"], 11.5, DIM),
+                txt(fmt_coord(sel["lat"], sel["lon"]), 11.5, TEXT, font_family="monospace"),
+            ]
+            for extra in (sel.get("note"), sel.get("sensor")):
+                if extra:
+                    lines.append(txt(extra, 10.5, FAINT))
+            if self.on_report_here:
+                lines.append(ft.TextButton(
+                    "Report smoke or fire here", icon=ft.Icons.ADD_LOCATION_ALT,
+                    on_click=lambda e: self.on_report_here(sel["lat"], sel["lon"])))
+            controls.append(ft.Container(
+                content=ft.Column(lines, spacing=1, tight=True),
+                bgcolor=PANEL, border=ft.Border.all(1, LINE), border_radius=10,
+                padding=ft.Padding.only(left=10, right=4, top=2, bottom=4),
+                left=10, bottom=48, width=max(180, min(w - 70, 310))))
         if self.pin_mode:
             controls.append(ft.Container(
                 content=ft.Row([
@@ -492,6 +635,6 @@ class FireMap(ft.Container):
                              bottom=ft.BorderSide(1.5, DIM))))
         controls.append(ft.Container(content=txt(f"{km} km", 9.5, DIM), left=12, top=h - 22))
 
-        controls += [self.search_panel, self.controls_panel]     # always on top
+        controls += [self.search_panel, self.results_panel, self.controls_panel]     # always on top
         self.map_stack.width, self.map_stack.height = w, h
         self.map_stack.controls = controls

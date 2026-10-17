@@ -51,6 +51,11 @@ def compass_dir(deg):
     return COMPASS[int(round(deg / 22.5)) % 16]
 
 
+def fmt_coord(lat, lon):
+    """-25.6958, 27.2956 -> '25.6958° S, 27.2956° E'"""
+    return f"{abs(lat):.4f}° {'S' if lat < 0 else 'N'}, {abs(lon):.4f}° {'E' if lon >= 0 else 'W'}"
+
+
 def age_text(ts):
     """'12 min ago', '3 h ago' for an epoch timestamp."""
     import time

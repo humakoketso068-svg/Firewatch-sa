@@ -21,6 +21,7 @@ import urllib.request
 from email.message import EmailMessage
 
 import config
+import places
 import store
 from stations import distance_km
 
@@ -44,10 +45,15 @@ def sync_subscriber(user, zone):
     if mode not in MODES or mode == "off":
         store.delete("subscribers", "email", email)
         return
+    place = user.get("alert_place")
+    if place:                                   # exact town/village chosen by the person
+        label = f'{place["name"]}, {place["province"]}' if place.get("province") else place["name"]
+        zone_id, zone_name, lat, lon = zone["id"], label, place["lat"], place["lon"]
+    else:
+        zone_id, zone_name, lat, lon = zone["id"], zone["name"], zone["lat"], zone["lon"]
     store.upsert("subscribers", {
         "email": email, "name": user.get("name", ""), "phone": user.get("phone", ""),
-        "zone_id": zone["id"], "zone_name": zone["name"],
-        "lat": zone["lat"], "lon": zone["lon"], "alerts": mode,
+        "zone_id": zone_id, "zone_name": zone_name, "lat": lat, "lon": lon, "alerts": mode,
     }, key="email")
 
 
@@ -100,11 +106,12 @@ def send_email(address, subject, body):
             pass
 
 
-def build_message(zone_name, count, km):
+def build_message(zone_name, count, km, where=""):
     plural = "s" if count != 1 else ""
+    extra = f" (nearest: {where})" if where else ""
     sms = (f"Firewatch: satellite detected {count} fire hotspot{plural}, about {km:.0f} km from "
-           f"{zone_name}. Stay alert and follow local authorities. Emergency: 112.")
-    mail = (f"NASA satellites detected {count} fire hotspot{plural} about {km:.0f} km from {zone_name}.\n\n"
+           f"{zone_name}{extra}. Stay alert and follow local authorities. Emergency: 112.")
+    mail = (f"NASA satellites detected {count} fire hotspot{plural} about {km:.0f} km from {zone_name}{extra}.\n\n"
             "Stay alert, keep your phone on and follow instructions from local authorities.\n"
             "In an emergency call 112.\n\n"
             "You get this because you turned on fire alerts in Firewatch. "
@@ -141,7 +148,7 @@ def send_test(user):
     mode = user.get("alerts", "off")
     if mode == "off":
         return "Choose Email, SMS or both, press Save, then send the test."
-    sms, mail = build_message(user.get("home_zone_name", "your town"), 1, 12)
+    sms, mail = build_message((user.get("alert_place") or {}).get("name") or user.get("home_zone_name", "your town"), 1, 12)
     used, errors = _deliver(mode, user.get("phone", ""), user.get("email", ""),
                             "TEST " + sms, "THIS IS A TEST.\n\n" + mail, subject="Firewatch test alert")
     if used:
@@ -199,7 +206,8 @@ def check_and_notify(hotspots, now=None, deliver=None):
             if not near:
                 continue
             near.sort(key=lambda item: item[0])
-            sms, mail = build_message(sub.get("zone_name", "your town"), len(near), near[0][0])
+            sms, mail = build_message(sub.get("zone_name", "your town"), len(near), near[0][0],
+                                    places.where(near[0][1]["lat"], near[0][1]["lon"]))
             used, errors = deliver(mode, sub.get("phone", ""), email, sms, mail)
             for err in errors:
                 print(f"alerts: {email}: {err}")

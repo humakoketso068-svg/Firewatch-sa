@@ -93,6 +93,15 @@ def _public(user):
     return {k: v for k, v in user.items() if k not in ("salt", "hash", "iters")}
 
 
+def _clean_place(place):
+    """Keep only the few fields we need from a chosen place (or None)."""
+    try:
+        return {"name": str(place["name"])[:60], "province": str(place.get("province", ""))[:40],
+                "lat": round(float(place["lat"]), 5), "lon": round(float(place["lon"]), 5)}
+    except (TypeError, KeyError, ValueError):
+        return None
+
+
 def clean_phone(phone):
     return re.sub(r"[\s\-()]", "", phone or "")
 
@@ -104,7 +113,7 @@ def valid_phone(phone):
 ALERT_MODES = ('off', 'email', 'sms', 'both')
 
 
-def register(name, email, phone, home_zone_id, password, consent, alerts='off'):
+def register(name, email, phone, home_zone_id, password, consent, alerts='off', alert_place=None):
     """Returns (user, error). Exactly one of the two is None."""
     name, email = (name or "").strip(), (email or "").strip().lower()
     if len(name) < 2:
@@ -129,6 +138,7 @@ def register(name, email, phone, home_zone_id, password, consent, alerts='off'):
         "name": name, "email": email, "phone": clean_phone(phone),
         "home_zone_id": home_zone_id, "consent": True,
         "alerts": alerts if alerts in ALERT_MODES else "off",
+        "alert_place": _clean_place(alert_place),
         "salt": salt, "iters": iters, "hash": _hash(password, salt, iters),
     }
     _save(users)
@@ -145,7 +155,7 @@ def login(email, password):
     return _public(user), None
 
 
-def update_profile(email, name, phone, home_zone_id, alerts=None):
+def update_profile(email, name, phone, home_zone_id, alerts=None, alert_place=None):
     name = (name or "").strip()
     if len(name) < 2:
         return None, "Please enter your full name."
@@ -158,5 +168,6 @@ def update_profile(email, name, phone, home_zone_id, alerts=None):
     user.update(name=name, phone=clean_phone(phone), home_zone_id=home_zone_id)
     if alerts in ALERT_MODES:
         user['alerts'] = alerts
+    user['alert_place'] = _clean_place(alert_place)
     _save(users)
     return _public(user), None

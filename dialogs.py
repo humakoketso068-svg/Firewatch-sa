@@ -6,11 +6,12 @@ import random
 import flet as ft
 
 import auth
+import places
 import reports
 from stations import distance_km, eta_minutes, nearby_stations
 from ui import (
     DIM, EMERGENCY, EMERGENCY_DARK, FAINT, INFO_BLUE, LINE, LINE_SOFT, RISK, TEXT,
-    primary_button, txt,
+    fmt_coord, primary_button, txt,
 )
 
 
@@ -31,6 +32,39 @@ def _zone_dropdown(app, label="Nearest town", value=None, width=None):
         editable=True, enable_filter=True, menu_height=300, leading_icon=ft.Icons.LOCATION_ON,
         options=[ft.DropdownOption(key=z["id"], text=f'{z["name"].split(" (")[0]}, {z["province"]}') for z in zones],
     )
+
+
+def _place_picker(app, current=None):
+    """Optional exact town/village search. Returns (controls, get_place)."""
+    chosen = {"place": current}
+    field = ft.TextField(label="Exact town or village for alerts (optional)", dense=True, border_radius=8,
+                         text_size=14, prefix_icon=ft.Icons.PIN_DROP,
+                         value=(f'{current["name"]}, {current["province"]}' if current else ""),
+                         hint_text="Type a name, e.g. Lerome")
+    results = ft.Column(spacing=0, tight=True)
+    status = txt("", 11.5, DIM)
+    status.value = (f'Alerts use {fmt_coord(current["lat"], current["lon"])}' if current else
+                    ("" if places.available() else "Place list not built yet (run build_places.py)."))
+
+    def pick(p):
+        chosen["place"] = p
+        field.value = f'{p["name"]}, {p["province"]}'
+        status.value = f'Alerts use {fmt_coord(p["lat"], p["lon"])}'
+        results.controls = []
+        app.page.update()
+
+    def on_change(e):
+        q = (field.value or "").strip()
+        if not q:
+            chosen["place"], status.value = None, ""
+        found = places.search(q, 5) if len(q) >= 2 else []
+        results.controls = [
+            ft.TextButton(f'{p["name"]}, {p["province"]}', icon=ft.Icons.LOCATION_ON,
+                          on_click=lambda e, p=p: pick(p)) for p in found]
+        app.page.update()
+
+    field.on_change = on_change
+    return [field, results, status], (lambda: chosen["place"])
 
 
 ALERT_OPTIONS = [("off", "Off"), ("email", "Email"), ("sms", "SMS (text message)"), ("both", "Email and SMS")]
@@ -103,6 +137,7 @@ def show_signup(app):
     phone = _field("Mobile number", ft.Icons.PHONE, hint_text="082 123 4567")
     town = _zone_dropdown(app)
     alerts = _alerts_dropdown("off")
+    place_ctrls, get_place = _place_picker(app)
     password = _field("Password (min. 8 characters)", ft.Icons.LOCK, password=True, can_reveal_password=True)
     confirm = _field("Confirm password", ft.Icons.LOCK, password=True, can_reveal_password=True)
     consent = ft.Checkbox(
@@ -118,7 +153,7 @@ def show_signup(app):
             app.page.update()
             return
         user, err = auth.register(name.value, email.value, phone.value, town.value, password.value, consent.value,
-                                  alerts.value or "off")
+                                  alerts.value or "off", get_place())
         if err:
             _show_error(error, err)
             app.page.update()
@@ -131,7 +166,7 @@ def show_signup(app):
     dlg = _dialog(
         app, "Create your account",
         [txt("Your details let fire stations reach you and show you alerts for your area.", 12.5, DIM),
-         name, email, phone, town, alerts, txt(ALERT_NOTE, 11, FAINT), password, confirm, consent, error,
+         name, email, phone, town, alerts, *place_ctrls, txt(ALERT_NOTE, 11, FAINT), password, confirm, consent, error,
          ft.TextButton("Already have an account? Log in", on_click=lambda e: (app.page.pop_dialog(), show_login(app)))],
         [ft.TextButton("Cancel", on_click=lambda e: app.page.pop_dialog()),
          primary_button("Create account", submit)],
@@ -146,12 +181,14 @@ def show_profile(app):
     phone = _field("Mobile number", ft.Icons.PHONE, value=user["phone"])
     town = _zone_dropdown(app, value=user["home_zone_id"])
     alerts = _alerts_dropdown(user.get("alerts", "off"))
+    place_ctrls, get_place = _place_picker(app, user.get("alert_place"))
     info = txt("", 12, DIM)
     info.visible = False
     error = _error_text()
 
     def save(e=None):
-        updated, err = auth.update_profile(user["email"], name.value, phone.value, town.value, alerts.value or "off")
+        updated, err = auth.update_profile(user["email"], name.value, phone.value, town.value, alerts.value or "off",
+                                            get_place())
         if err:
             _show_error(error, err)
             app.page.update()
@@ -182,7 +219,7 @@ def show_profile(app):
 
     dlg = _dialog(
         app, "Your profile",
-        [txt(user["email"], 12.5, DIM), name, phone, town, alerts, txt(ALERT_NOTE, 11, FAINT),
+        [txt(user["email"], 12.5, DIM), name, phone, town, alerts, *place_ctrls, txt(ALERT_NOTE, 11, FAINT),
          ft.TextButton("Send me a test alert", icon=ft.Icons.SEND, on_click=test_alert), info, error],
         [ft.TextButton("Log out", on_click=sign_out, style=ft.ButtonStyle(color=EMERGENCY)),
          ft.TextButton("Cancel", on_click=lambda e: app.page.pop_dialog()),
@@ -322,6 +359,11 @@ def show_report(app, lat, lon):
     user = app.user
     near = min(app.sim.zones, key=lambda z: distance_km(lat, lon, z["lat"], z["lon"]))
     km = distance_km(lat, lon, near["lat"], near["lon"])
+    spot, spot_km = places.nearest(lat, lon, 30)
+    if spot:
+        where = f"Near {spot['name']}, {spot['province']} ({spot_km:.0f} km away)"
+    else:
+        where = f"About {km:.0f} km from {near['name'].split(' (')[0]}, {near['province']}"
     kind = ft.Dropdown(
         label="What can you see?", value="smoke", dense=True, border_radius=8, text_size=14,
         options=[ft.DropdownOption(key=k, text=v) for k, v in reports.KINDS.items()],
@@ -353,7 +395,7 @@ def show_report(app, lat, lon):
     send_button = primary_button("Send report", lambda e: app.page.run_task(send), color=INFO_BLUE)
     dlg = _dialog(
         app, "Report smoke or fire",
-        [txt(f"Pin placed about {km:.0f} km from {near['name'].split(' (')[0]}, {near['province']}.", 12.5, DIM),
+        [txt(where, 12.5, DIM), txt(fmt_coord(lat, lon), 12, TEXT, font_family="monospace"),
          kind, note, error,
          txt("Reports are public and unverified, and show your first name. This does not alert "
              "fire crews. In an emergency use the SOS button or call 112.", 11, FAINT)],
