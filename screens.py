@@ -47,7 +47,7 @@ def _status_chip(inc):
     return chip(label, STATUS_COLOR.get(inc.get("status"), DIM))
 
 
-def _banner(text, color=EMERGENCY, icon=ft.icons.INFO_OUTLINE):
+def _banner(text, color=EMERGENCY, icon=ft.Icons.INFO):
     return ft.Container(
         content=ft.Row([ft.Icon(icon, color=color, size=18), ft.Container(content=txt(text, 12, TEXT), expand=True)],
                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
