@@ -481,7 +481,6 @@ class FirewatchApp:
 
         self.user = None
         self.station = None          # set after a station logs in to the console
-        self.keep_signed_in = True   # remember the signed-in person in this browser
         self.mobile = False
         self._layout_key = None
         self.header = Header(self)
@@ -828,19 +827,11 @@ class FirewatchApp:
     # -- accounts, alerts, helpers -----------------------------------------
     def set_user(self, user):
         self.user = user
-        self._remember(user)
         self.header.set_user(user)
         self.map.user_zone_id = user["home_zone_id"] if user else None
         if user:
             self.sync_subscription(user)
         self.refresh()
-
-    def _remember(self, user):
-        """Keep the signed-in email in this browser so the person is recognised on the next visit."""
-        if self.prefs is None:
-            return
-        value = user["email"] if (user and self.keep_signed_in) else ""
-        self.page.run_task(self.prefs.set, "firewatch_me", value)
 
     def is_browser_build(self):
         return config.IN_BROWSER
@@ -1027,16 +1018,7 @@ async def main(page: ft.Page):
         except Exception:
             auth.use_browser_storage(None, None)     # fall back to in-memory for this visit
     page.clean()
-    app = FirewatchApp(page, saver=saver, prefs=prefs)
-    if prefs is not None:
-        try:                                         # recognise a returning person without a new login
-            me = await asyncio.wait_for(prefs.get("firewatch_me"), timeout=3)
-            user = auth.find(me) if me else None
-            if user:
-                app.set_user(user)
-                app.toast(f"Welcome back, {user['name'].split()[0]}.")
-        except Exception:
-            pass
+    FirewatchApp(page, saver=saver, prefs=prefs)
 
 
 if sys.platform == "emscripten":

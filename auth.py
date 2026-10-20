@@ -145,12 +145,6 @@ def register(name, email, phone, home_zone_id, password, consent, alerts='off', 
     return _public(users[email]), None
 
 
-def find(email):
-    """The public (no password hash) record for an email, or None. Used to restore a remembered sign-in."""
-    user = _load().get((email or "").strip().lower())
-    return _public(user) if user else None
-
-
 def login(email, password):
     email = (email or "").strip().lower()
     user = _load().get(email)

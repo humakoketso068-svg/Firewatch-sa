@@ -1,10 +1,1 @@
-
-flet==0.21.2
-flet-web==0.21.2
-fastapi==0.110.0
-uvicorn==0.29.0
-
-
-
-
-
+flet==1.0.4
