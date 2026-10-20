@@ -12,6 +12,9 @@ import traceback
 import alerts
 import config
 import firms
+import incidents
+import weather
+from simulation import ZONE_DEFS
 
 _started = False
 _start_lock = threading.Lock()
@@ -23,7 +26,14 @@ def _loop():
             state = firms.refresh(force=True)
             if state["error"]:
                 print("firms:", state["error"])
-            alerts.check_and_notify(state["hotspots"])
+            zones = [{"id": z[0], "name": z[1], "province": z[2], "lat": z[3], "lon": z[4]} for z in ZONE_DEFS]
+            clusters = firms.cluster(state["hotspots"], zones)
+            for c in clusters[:15]:                    # real wind and humidity for the biggest fires
+                weather.fetch(c["lat"], c["lon"])
+            incidents.sync_fires(clusters, state["hotspots"])
+            sent = []
+            alerts.check_and_notify(state["hotspots"], report=sent)
+            incidents.note_alerts(sent)
         except Exception:
             traceback.print_exc()
         time.sleep(config.REFRESH_MIN * 60)

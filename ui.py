@@ -118,3 +118,15 @@ def primary_button(label, on_click, icon=None, color=EMERGENCY):
         label, icon=icon, on_click=on_click,
         style=ft.ButtonStyle(bgcolor=color, color="#FFFFFF"),
     )
+
+
+def open_url(page, url):
+    """Open a link or phone call (tel:112) from a button. Works on desktop, phone and web."""
+    async def go():
+        launcher = getattr(page, "_fw_launcher", None)
+        if launcher is None:
+            launcher = ft.UrlLauncher()
+            page.services.append(launcher)
+            page._fw_launcher = launcher
+        await launcher.launch_url(url)
+    page.run_task(go)

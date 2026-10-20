@@ -4,12 +4,15 @@ double-click to zoom, "find a place" search, and collision-free place names that
 fill in as you zoom closer.
 """
 
+import math
 import time
 
 import flet as ft
 import flet.canvas as cv
 
 import places
+import reports
+import spread
 
 from geo import (
     ESWATINI, LABELLED, LAT_MIN, LESOTHO, LON_MIN, PAD_X, PAD_Y, PROVINCE_LABELS,
@@ -57,6 +60,8 @@ class FireMap(ft.Container):
         self.light = False            # data-saver: fewer labels and effects
         self.on_pin = None            # callback(lat, lon)
         self.on_report_click = None
+        self.on_report_open = None    # callback(report) when a report marker is tapped
+        self.notices = []             # FPA / station notices and rescue flags
         self.on_report_here = None    # callback(lat, lon)
         self.selected = None          # place or spot shown in the coordinate card
         self._results = []
@@ -354,6 +359,36 @@ class FireMap(ft.Container):
             cv.Path(path, ft.Paint(color=LAND_EDGE, style=ft.PaintingStyle.STROKE, stroke_width=1.2)),
         ]
 
+    def _spread_layer(self, controls, fire, state, fx, fy, scale, visible):
+        """Indicative 3-hour spread ellipse: long axis downwind (see spread.py)."""
+        try:
+            pred, source = spread.for_fire(fire, state)
+        except Exception:
+            return
+        if not pred:
+            return
+        px_per_km = PX_PER_LAT * scale / KM_PER_DEG_LAT
+        a, b = pred["a_km"] * px_per_km, pred["b_km"] * px_per_km
+        cdist, head = pred["centre_km"] * px_per_km, pred["head_km"] * px_per_km
+        if a < 9:                       # zoomed far out: enlarge the shape so the wind direction is still visible
+            grow = 9.0 / max(a, 0.01)
+            a, b, cdist, head = 9.0, max(b * grow, 3.0), cdist * grow, head * grow
+        br = math.radians(pred["bearing"])
+        ccx, ccy = fx + math.sin(br) * cdist, fy - math.cos(br) * cdist
+        if not visible(ccx, ccy, a + 40):
+            return
+        controls.append(ft.Container(
+            left=ccx - a, top=ccy - b, width=2 * a, height=2 * b,
+            bgcolor=EMERGENCY, opacity=0.13, border=ft.Border.all(1.2, EMERGENCY), border_radius=max(a, b),
+            rotate=ft.Rotate((pred["bearing"] - 90) * math.pi / 180),
+            tooltip=(f'Indicative spread, next {pred["hours"]:.0f} h: up to {pred["head_km"]:.1f} km downwind '
+                     f'(about {pred["area_ha"]:,.0f} ha), head speed {pred["ros_kmh"]:.1f} km/h.\n'
+                     f'Uses {source}. Not an operational forecast.')))
+        tip_x, tip_y = fx + math.sin(br) * head, fy - math.cos(br) * head
+        controls.append(ft.Container(
+            content=ft.Text("➤", size=14, color=EMERGENCY), left=tip_x - 7, top=tip_y - 9,
+            rotate=ft.Rotate((pred["bearing"] - 90) * math.pi / 180)))
+
     def render(self, state):
         self.state = state
         self._sync_gestures()
@@ -417,6 +452,8 @@ class FireMap(ft.Container):
             fx, fy = self._pos(fire["x"], fire["y"], scale, ox, oy)
             if not visible(fx, fy, 200):
                 continue
+            if not fire["contained"] and not self.light:
+                self._spread_layer(controls, fire, state, fx, fy, scale, visible)
             radius = fire["radius"] * scale
             size = max(8, radius * 1.4)
             color = CONTAINED if fire["contained"] else RISK[fire["severity"]]
@@ -551,11 +588,34 @@ class FireMap(ft.Container):
             if not visible(rx, ry, 16):
                 continue
             size = max(20, 24 * ms)
+            level = r.get("verified", "unverified")
             tip = (f'{r["kind_label"]} · {age_text(r["ts"])}' + (f'\n{r["note"]}' if r["note"] else "")
-                   + f'\n{fmt_coord(r["lat"], r["lon"])}')
+                   + f'\n{fmt_coord(r["lat"], r["lon"])}\n{reports.VERIFY_LABEL.get(level, "")}'
+                   + (f' · {r["votes"]} confirmation(s)' if r.get("votes") else "") + "\nTap for details")
             controls.append(ft.Container(
-                content=ft.Icon(ft.Icons.LOCATION_ON, color=INFO_BLUE, size=size),
-                left=rx - size / 2, top=ry - size, width=size, height=size, tooltip=tip))
+                content=ft.Icon(ft.Icons.LOCATION_ON, color=INFO_BLUE if level != "unverified" else "#8FA9DB", size=size),
+                left=rx - size / 2, top=ry - size, width=size, height=size, tooltip=tip,
+                on_click=(lambda e, r=r: self.on_report_open(r)) if self.on_report_open else None))
+            if level != "unverified":
+                controls.append(ft.Container(
+                    content=ft.Icon(ft.Icons.VERIFIED, color=RISK["low"], size=max(9, size * 0.4)),
+                    left=rx + size * 0.12, top=ry - size * 1.02))
+        for n in self.notices:
+            try:
+                nx, ny = self._pos(*project(float(n["lat"]), float(n["lon"])), scale, ox, oy)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not visible(nx, ny, 16):
+                continue
+            rescue = n.get("kind") == "rescue"
+            color = "#8E44AD" if rescue else (EMERGENCY if n.get("status") in ("active", "evacuation") else CONTAINED)
+            size = max(20, 22 * ms)
+            tip = (f'{n.get("title", "Notice")}\n{n.get("data", {}).get("text", "")}\n'
+                   f'Posted by {n.get("data", {}).get("by", "a fire station")}')
+            controls.append(ft.Container(
+                content=ft.Icon(ft.Icons.CAR_CRASH if rescue else ft.Icons.CAMPAIGN, size=size * 0.62, color="#FFFFFF"),
+                left=nx - size / 2, top=ny - size / 2, width=size, height=size, bgcolor=color, border_radius=6,
+                alignment=ft.Alignment.CENTER, border=ft.Border.all(1.5, "#FFFFFF"), tooltip=tip))
         if self.pending_pin:
             qx, qy = self._pos(*project(*self.pending_pin), scale, ox, oy)
             controls.append(ft.Container(

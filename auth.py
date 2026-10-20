@@ -145,6 +145,12 @@ def register(name, email, phone, home_zone_id, password, consent, alerts='off', 
     return _public(users[email]), None
 
 
+def find(email):
+    """The public (no password hash) record for an email, or None. Used to restore a remembered sign-in."""
+    user = _load().get((email or "").strip().lower())
+    return _public(user) if user else None
+
+
 def login(email, password):
     email = (email or "").strip().lower()
     user = _load().get(email)
@@ -169,5 +175,44 @@ def update_profile(email, name, phone, home_zone_id, alerts=None, alert_place=No
     if alerts in ALERT_MODES:
         user['alerts'] = alerts
     user['alert_place'] = _clean_place(alert_place)
+    _save(users)
+    return _public(user), None
+
+
+MAX_CONTACTS = 3
+
+
+def update_settings(email, lang=None, min_sev=None, quiet=None, radius_km=None, contacts=None):
+    """Alert preferences and emergency contacts. Returns (user, error).
+    quiet is None or [start_hour, end_hour]; contacts is a list of {"name", "phone"}."""
+    users = _load()
+    user = users.get(email)
+    if not user:
+        return None, "Account not found."
+    if lang is not None:
+        user["lang"] = lang if lang in ("en", "af", "zu", "tn", "st") else "en"
+    if min_sev is not None:
+        user["min_sev"] = min_sev if min_sev in ("low", "moderate", "high") else "low"
+    if quiet is not None or radius_km is not None:
+        user["quiet"] = None
+        if quiet:
+            try:
+                user["quiet"] = [int(quiet[0]) % 24, int(quiet[1]) % 24]
+            except (TypeError, ValueError, IndexError):
+                return None, "Quiet hours must be hours between 0 and 23."
+        try:
+            user["radius_km"] = max(5, min(100, int(radius_km or 30)))
+        except (TypeError, ValueError):
+            return None, "Radius must be a number of kilometres."
+    if contacts is not None:
+        clean = []
+        for c in contacts[:MAX_CONTACTS]:
+            name, phone = (c.get("name") or "").strip(), c.get("phone") or ""
+            if not name and not clean_phone(phone):
+                continue                                    # empty row
+            if len(name) < 2 or not valid_phone(phone):
+                return None, "Each emergency contact needs a name and a valid mobile number."
+            clean.append({"name": name[:40], "phone": clean_phone(phone)})
+        user["contacts"] = clean
     _save(users)
     return _public(user), None

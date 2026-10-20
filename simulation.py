@@ -129,7 +129,7 @@ class Simulation:
                 "moisture": 8 + random.random() * 10,
                 "risk": 0.0, "risk_level": "low", "on_fire": False,
             })
-        self.wind_speed = 12 + random.random() * 8
+        self.wind_speed = 19 + random.random() * 13        # km/h
         self.wind_dir = random.random() * 360
         self.wind_history = []
         self.moist_history = []
@@ -147,7 +147,7 @@ class Simulation:
 
     # -- risk model ---------------------------------------------------
     def _compute_risk(self, z):
-        wind_term = min(self.wind_speed / 35, 1)
+        wind_term = min(self.wind_speed / 56, 1)
         moist_term = 1 - min(z["moisture"] / 20, 1)
         temp_term = min((z["temp"] - 60) / 40, 1)
         slope_term = z["slope"]
@@ -177,7 +177,7 @@ class Simulation:
 
     # -- simulation steps ----------------------------------------------
     def _step_environment(self):
-        self.wind_speed = clamp(self.wind_speed + (random.random() - 0.5) * 2.2, 4, 42)
+        self.wind_speed = clamp(self.wind_speed + (random.random() - 0.5) * 3.5, 6, 68)
         self.wind_dir = (self.wind_dir + (random.random() - 0.5) * 10 + 360) % 360
 
         for z in self.zones:
@@ -243,7 +243,7 @@ class Simulation:
             elif age > 0 and age % 6 == 0:
                 self._log("info", "Update",
                           f"Fire at [b]{f['zone_name']}[/b] spreading — radius {round(f['radius'])} units, "
-                          f"wind {round(self.wind_speed)} mph.")
+                          f"wind {round(self.wind_speed)} km/h.")
 
         self.fires = [
             f for f in self.fires
@@ -279,7 +279,7 @@ class Simulation:
             radius = 3.0 + min(n, 15) * 0.9
             fires.append({
                 "id": i, "zone_id": c["zone_id"], "zone_name": c["zone_name"], "province": c["province"],
-                "x": x, "y": y, "start_tick": self.tick_count,
+                "x": x, "y": y, "lat": c["lat"], "lon": c["lon"], "start_tick": self.tick_count,
                 "radius": radius, "max_radius": radius,
                 "wind_dir_at_start": self.wind_dir, "severity": severity,
                 "contained": False, "contain_tick": None,

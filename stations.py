@@ -7,7 +7,9 @@ not an official register. Replace build_stations() with a real dataset
 (e.g. municipal open data) before relying on this for anything real.
 """
 
+import json
 import math
+from pathlib import Path
 
 from geo import project
 from simulation import ZONE_DEFS
@@ -52,7 +54,38 @@ def build_stations():
     return stations
 
 
-FIRE_STATIONS = build_stations()
+def _load_directory():
+    """stations.json next to this file: a list of real stations (see tools/build_stations.py).
+    Each entry: id, name, province, lat, lon, and optionally phone, sms, email, area, verified."""
+    try:
+        data = json.loads((Path(__file__).resolve().parent / "stations.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for i, d in enumerate(data if isinstance(data, list) else []):
+        try:
+            lat, lon = float(d["lat"]), float(d["lon"])
+            x, y = project(lat, lon)
+            out.append({
+                "id": str(d.get("id") or f"st-{i}"), "name": str(d["name"]),
+                "province": str(d.get("province", "")), "lat": lat, "lon": lon, "x": x, "y": y,
+                "phone": str(d.get("phone", "")), "sms": str(d.get("sms", "")),
+                "email": str(d.get("email", "")), "area": str(d.get("area", "")),
+                "verified": bool(d.get("verified", False)),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+_REAL = _load_directory()
+USING_REAL_DIRECTORY = bool(_REAL)
+FIRE_STATIONS = _REAL or build_stations()    # without stations.json these are ILLUSTRATIVE samples
+
+
+def contactable(station):
+    """A station we may message directly: confirmed by a human and with an SMS number or email."""
+    return bool(station.get("verified") and (station.get("sms") or station.get("email")))
 
 
 def distance_km(lat1, lon1, lat2, lon2):

@@ -47,6 +47,17 @@ TWILIO_SID = env("TWILIO_ACCOUNT_SID")
 TWILIO_TOKEN = env("TWILIO_AUTH_TOKEN")
 TWILIO_FROM = env("TWILIO_FROM")                          # your Twilio number, e.g. +1555...
 
+# --- SMS through a South African provider (set ONE of these; Twilio is the fallback) ---
+SMS_PROVIDER = env("SMS_PROVIDER").lower()                 # "bulksms", "clickatell" or "twilio" (auto if empty)
+BULKSMS_ID = env("BULKSMS_TOKEN_ID")                       # BulkSMS API token id + secret
+BULKSMS_SECRET = env("BULKSMS_TOKEN_SECRET")
+CLICKATELL_KEY = env("CLICKATELL_API_KEY")                 # Clickatell One API key
+
+# --- Station console (fire stations log in with this key to see and acknowledge SOS calls) ---
+# One shared key:  STATION_KEY=abc123          Several stations:  STATION_KEYS=Komatipoort:abc,Nelspruit:def
+STATION_KEY = env("STATION_KEY")
+STATION_KEYS = env("STATION_KEYS")
+
 # --- Email through any SMTP server (Gmail needs an "app password") ---
 SMTP_HOST = env("SMTP_HOST")
 SMTP_PORT = env_int("SMTP_PORT", 587, 1, 65535)
@@ -60,8 +71,33 @@ ALERT_MAX_AGE_H = env_float("ALERT_MAX_AGE_H", 6.0)       # ignore detections ol
 ALERT_COOLDOWN_H = env_float("ALERT_COOLDOWN_H", 3.0)     # at most one message per person per this
 
 
+def sms_provider():
+    """Which SMS service is configured, or '' for none."""
+    wanted = {"bulksms": bool(BULKSMS_ID and BULKSMS_SECRET), "clickatell": bool(CLICKATELL_KEY),
+              "twilio": bool(TWILIO_SID and TWILIO_TOKEN and TWILIO_FROM)}
+    if SMS_PROVIDER in wanted:
+        return SMS_PROVIDER if wanted[SMS_PROVIDER] else ""
+    for name in ("bulksms", "clickatell", "twilio"):
+        if wanted[name]:
+            return name
+    return ""
+
+
 def sms_ready():
-    return bool(TWILIO_SID and TWILIO_TOKEN and TWILIO_FROM)
+    return bool(sms_provider())
+
+
+def station_logins():
+    """{key: station label} from STATION_KEY / STATION_KEYS."""
+    out = {}
+    if STATION_KEY:
+        out[STATION_KEY] = "Fire station"
+    for part in STATION_KEYS.split(","):
+        if ":" in part:
+            label, key = part.split(":", 1)
+            if label.strip() and key.strip():
+                out[key.strip()] = label.strip()
+    return out
 
 
 def email_ready():

@@ -11,17 +11,17 @@ of their town, at most one message per ALERT_COOLDOWN_H hours, and never twice f
 the same hotspot.
 """
 
-import base64
+import hashlib
+import json
 import smtplib
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from email.message import EmailMessage
 
 import config
+import i18n
 import places
+import sms as sms_service
 import store
 from stations import distance_km
 
@@ -35,6 +35,18 @@ _last_msg = {}               # email -> time of the last message
 # ---------------------------------------------------------------------------
 # Subscribers
 # ---------------------------------------------------------------------------
+
+PRIVACY_STEP = 0.05          # degrees (about 5 km): subscriber positions are stored blurred
+
+
+def blur(value):
+    """Round a coordinate to the privacy grid so the server never holds an exact home location."""
+    return round(round(value / PRIVACY_STEP) * PRIVACY_STEP, 3)
+
+
+def who_id(email):
+    return hashlib.sha256((email or "").strip().lower().encode()).hexdigest()[:12]
+
 
 def sync_subscriber(user, zone):
     """Create, update or remove the server-side record for this user."""
@@ -53,20 +65,45 @@ def sync_subscriber(user, zone):
         zone_id, zone_name, lat, lon = zone["id"], zone["name"], zone["lat"], zone["lon"]
     store.upsert("subscribers", {
         "email": email, "name": user.get("name", ""), "phone": user.get("phone", ""),
-        "zone_id": zone_id, "zone_name": zone_name, "lat": lat, "lon": lon, "alerts": mode,
+        "zone_id": zone_id, "zone_name": zone_name, "lat": blur(lat), "lon": blur(lon), "alerts": mode,
+        "prefs": json.dumps(prefs_of(user)),
     }, key="email")
 
 
-def e164(phone):
-    """South African numbers: 082 123 4567 -> +27821234567."""
-    p = "".join(ch for ch in (phone or "") if ch.isdigit() or ch == "+")
-    if p.startswith("+"):
-        return p
-    if p.startswith("0") and len(p) == 10:
-        return "+27" + p[1:]
-    if p.startswith("27") and len(p) == 11:
-        return "+" + p
-    return p
+e164 = sms_service.e164
+
+SEVERITY_ORDER = {"low": 0, "moderate": 1, "high": 2}
+MIN_SEV_OPTIONS = [("low", "All detections"), ("moderate", "Moderate and strong"), ("high", "Strong fires only")]
+
+
+def prefs_of(user):
+    """The alert settings stored with a subscriber."""
+    return {
+        "lang": i18n.lang_ok(user.get("lang", "en")),
+        "min_sev": user.get("min_sev") if user.get("min_sev") in SEVERITY_ORDER else "low",
+        "quiet": user.get("quiet") if isinstance(user.get("quiet"), list) and len(user.get("quiet")) == 2 else None,
+        "radius": max(5, min(100, int(user.get("radius_km") or config.ALERT_RADIUS_KM))),
+    }
+
+
+def severity(hotspot):
+    """Strength of a satellite detection from its fire radiative power (MW)."""
+    frp = hotspot.get("frp", 0)
+    return "high" if frp >= 50 else "moderate" if frp >= 15 else "low"
+
+
+def local_hour(now=None):
+    """Hour of day in South Africa (UTC+2, no daylight saving)."""
+    return int(((now or time.time()) + 7200) // 3600) % 24
+
+
+def in_quiet_hours(quiet, now=None):
+    if not quiet:
+        return False
+    start, end, hour = int(quiet[0]) % 24, int(quiet[1]) % 24, local_hour(now)
+    if start == end:
+        return False
+    return start <= hour < end if start < end else (hour >= start or hour < end)
 
 
 # ---------------------------------------------------------------------------
@@ -74,15 +111,7 @@ def e164(phone):
 # ---------------------------------------------------------------------------
 
 def send_sms(phone, body):
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{config.TWILIO_SID}/Messages.json"
-    data = urllib.parse.urlencode({"To": e164(phone), "From": config.TWILIO_FROM, "Body": body}).encode()
-    token = base64.b64encode(f"{config.TWILIO_SID}:{config.TWILIO_TOKEN}".encode()).decode()
-    req = urllib.request.Request(url, data=data, method="POST", headers={"Authorization": "Basic " + token})
-    try:
-        with urllib.request.urlopen(req, timeout=20):
-            return
-    except urllib.error.HTTPError as err:
-        raise RuntimeError(f"Twilio said {err.code}: {err.read().decode('utf-8', 'replace')[:120]}") from None
+    return sms_service.send(phone, body)
 
 
 def send_email(address, subject, body):
@@ -106,13 +135,11 @@ def send_email(address, subject, body):
             pass
 
 
-def build_message(zone_name, count, km, where=""):
-    plural = "s" if count != 1 else ""
-    extra = f" (nearest: {where})" if where else ""
-    sms = (f"Firewatch: satellite detected {count} fire hotspot{plural}, about {km:.0f} km from "
-           f"{zone_name}{extra}. Stay alert and follow local authorities. Emergency: 112.")
-    mail = (f"NASA satellites detected {count} fire hotspot{plural} about {km:.0f} km from {zone_name}{extra}.\n\n"
-            "Stay alert, keep your phone on and follow instructions from local authorities.\n"
+def build_message(zone_name, count, km, where="", lang="en"):
+    place = f"{zone_name} ({where})" if where else zone_name
+    sms = i18n.t(lang, "alert_sms", n=count, km=f"{km:.0f}", place=place)
+    mail = (sms + "\n\n"
+            "Keep your phone on and follow instructions from local authorities.\n"
             "In an emergency call 112.\n\n"
             "You get this because you turned on fire alerts in Firewatch. "
             "You can switch them off any time in your profile.")
@@ -148,7 +175,8 @@ def send_test(user):
     mode = user.get("alerts", "off")
     if mode == "off":
         return "Choose Email, SMS or both, press Save, then send the test."
-    sms, mail = build_message((user.get("alert_place") or {}).get("name") or user.get("home_zone_name", "your town"), 1, 12)
+    sms, mail = build_message((user.get("alert_place") or {}).get("name") or user.get("home_zone_name", "your town"), 1, 12,
+                            lang=user.get("lang", "en"))
     used, errors = _deliver(mode, user.get("phone", ""), user.get("email", ""),
                             "TEST " + sms, "THIS IS A TEST.\n\n" + mail, subject="Firewatch test alert")
     if used:
@@ -174,9 +202,11 @@ def _load_sent():
     return _sent
 
 
-def check_and_notify(hotspots, now=None, deliver=None):
-    """Message subscribers who have a fresh hotspot near their town.
-    Returns the number of people messaged. `deliver` is replaceable for tests."""
+def check_and_notify(hotspots, now=None, deliver=None, report=None):
+    """Message subscribers who have a fresh hotspot near their town, respecting their
+    settings (radius, minimum strength, quiet hours, language).
+    Returns the number of people messaged. `deliver` is replaceable for tests; `report`,
+    if a list, receives (lat, lon, channels) for each person messaged (for the timeline)."""
     now = now or time.time()
     deliver = deliver or _deliver
     if not hotspots or not (config.sms_ready() or config.email_ready()):
@@ -196,18 +226,29 @@ def check_and_notify(hotspots, now=None, deliver=None):
                 continue
             if now - _last_msg.get(email, 0) < config.ALERT_COOLDOWN_H * 3600:
                 continue
+            try:
+                prefs = json.loads(sub.get("prefs") or "{}")
+            except (TypeError, ValueError):
+                prefs = {}
+            radius = float(prefs.get("radius") or config.ALERT_RADIUS_KM)
+            wanted = SEVERITY_ORDER.get(prefs.get("min_sev"), 0)
+            quiet = in_quiet_hours(prefs.get("quiet"), now)
             near = []
             for h in hotspots:
                 if now - h["ts"] > config.ALERT_MAX_AGE_H * 3600:
                     continue
+                sev = SEVERITY_ORDER[severity(h)]
+                if sev < wanted or (quiet and sev < SEVERITY_ORDER["high"]):
+                    continue                       # below their threshold, or quiet hours
                 km = distance_km(sub["lat"], sub["lon"], h["lat"], h["lon"])
-                if km <= config.ALERT_RADIUS_KM and f"{email}|{h['id']}" not in sent:
+                if km <= radius and f"{email}|{h['id']}" not in sent:
                     near.append((km, h))
             if not near:
                 continue
             near.sort(key=lambda item: item[0])
             sms, mail = build_message(sub.get("zone_name", "your town"), len(near), near[0][0],
-                                    places.where(near[0][1]["lat"], near[0][1]["lon"]))
+                                      places.where(near[0][1]["lat"], near[0][1]["lon"]),
+                                      lang=prefs.get("lang", "en"))
             used, errors = deliver(mode, sub.get("phone", ""), email, sms, mail)
             for err in errors:
                 print(f"alerts: {email}: {err}")
@@ -215,6 +256,9 @@ def check_and_notify(hotspots, now=None, deliver=None):
                 continue
             _last_msg[email] = now
             messaged += 1
+            _log_message(email, "alert", used, sub.get("zone_name", ""), near[0][0])
+            if isinstance(report, list):
+                report.append((near[0][1]["lat"], near[0][1]["lon"], used))
             for _, h in near[:50]:
                 key = f"{email}|{h['id']}"
                 sent.add(key)
@@ -223,3 +267,55 @@ def check_and_notify(hotspots, now=None, deliver=None):
                 except store.StoreError:
                     pass
         return messaged
+
+
+# ---------------------------------------------------------------------------
+# Message log and station/FPA broadcasts
+# ---------------------------------------------------------------------------
+
+def _log_message(email, kind, channels, place, km=None):
+    """One row per message sent. Holds a hashed id, never the email or phone number."""
+    try:
+        store.insert("message_log", {"who": who_id(email), "kind": kind, "channels": "+".join(channels),
+                                     "place": place[:80], "km": None if km is None else round(km)})
+    except store.StoreError:
+        pass
+
+
+def history_for(email, limit=10):
+    """The last messages Firewatch sent to this person (newest first)."""
+    try:
+        rows = store.select("message_log", limit=1000)
+    except store.StoreError:
+        return []
+    me = who_id(email)
+    return [r for r in rows if r.get("who") == me][:limit]
+
+
+def broadcast(lat, lon, radius_km, text, subject="Firewatch notice", now=None, deliver=None):
+    """Message every subscriber whose home is within radius_km of a point (used by FPA notices).
+    Ignores quiet hours and cooldown: an evacuation warning must get through.
+    Returns (people_messaged, list_of_error_strings)."""
+    deliver = deliver or _deliver
+    if not (config.sms_ready() or config.email_ready()):
+        return 0, ["No SMS provider or email server is set up on the server."]
+    try:
+        subscribers = store.select("subscribers", limit=5000)
+    except store.StoreError as err:
+        return 0, [f"Could not read subscribers: {err}"]
+    sent, errors = 0, []
+    for sub in subscribers:
+        email, mode = sub.get("email"), sub.get("alerts", "off")
+        if not email or mode not in ("email", "sms", "both"):
+            continue
+        try:
+            if distance_km(float(sub["lat"]), float(sub["lon"]), lat, lon) > radius_km:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        used, errs = deliver(mode, sub.get("phone", ""), email, text, text + "\n\nIn an emergency call 112.", subject)
+        errors += [f"{email.split('@')[0][:2]}***: {e}" for e in errs]
+        if used:
+            sent += 1
+            _log_message(email, "notice", used, sub.get("zone_name", ""))
+    return sent, errors[:5]

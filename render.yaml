@@ -29,3 +29,15 @@ services:
         sync: false
       - key: SMTP_PASS
         sync: false
+      - key: SMS_PROVIDER
+        sync: false
+      - key: BULKSMS_TOKEN_ID
+        sync: false
+      - key: BULKSMS_TOKEN_SECRET
+        sync: false
+      - key: CLICKATELL_API_KEY
+        sync: false
+      - key: STATION_KEY
+        sync: false
+      - key: STATION_KEYS
+        sync: false

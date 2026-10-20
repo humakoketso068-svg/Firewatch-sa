@@ -27,9 +27,11 @@ import auth
 import config
 import dialogs
 import firms
+import incidents
 import monitor
 import places
 import reports
+import screens
 from firemap import FireMap
 from simulation import MAX_HISTORY, TICK_SECONDS, Simulation
 from ui import (
@@ -102,7 +104,7 @@ class ZoneRow(ft.Container):
         self.flag.value = "Burning" if zone["on_fire"] else ""
         self.meta.value = (
             f'{zone["province"]} · {round(zone["temp"])}°F, '
-            f'{round(zone["moisture"])}% moisture, wind {round(wind_speed)} mph'
+            f'{round(zone["moisture"])}% moisture, wind {round(wind_speed)} km/h'
         )
         self.bar.set(zone["risk"], RISK[zone["risk_level"]])
 
@@ -283,6 +285,14 @@ class Header(ft.Container):
                 ft.PopupMenuItem(content="Reset simulation", icon=ft.Icons.REFRESH,
                                  on_click=app.reset),
             ]
+        items += [
+            ft.PopupMenuItem(content="Incidents and timelines", icon=ft.Icons.TIMELINE,
+                             on_click=lambda e: screens.show_incidents(app)),
+            ft.PopupMenuItem(content="What to do now", icon=ft.Icons.HEALTH_AND_SAFETY,
+                             on_click=lambda e: app.open_safety()),
+            ft.PopupMenuItem(content="Station console", icon=ft.Icons.LOCAL_FIRE_DEPARTMENT,
+                             on_click=lambda e: screens.show_console(app)),
+        ]
         if user is None:
             items += [
                 ft.PopupMenuItem(content="Log in", icon=ft.Icons.LOGIN,
@@ -296,6 +306,8 @@ class Header(ft.Container):
                                  icon=ft.Icons.ACCOUNT_CIRCLE, disabled=True),
                 ft.PopupMenuItem(content="My profile", icon=ft.Icons.PERSON,
                                  on_click=lambda e: dialogs.show_profile(app)),
+                ft.PopupMenuItem(content="Alert settings and contacts", icon=ft.Icons.TUNE,
+                                 on_click=lambda e: screens.show_settings(app)),
                 ft.PopupMenuItem(content="Log out", icon=ft.Icons.LOGOUT,
                                  on_click=lambda e: (app.set_user(None), app.toast("You have been logged out."))),
             ]
@@ -468,6 +480,8 @@ class FirewatchApp:
         page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
 
         self.user = None
+        self.station = None          # set after a station logs in to the console
+        self.keep_signed_in = True   # remember the signed-in person in this browser
         self.mobile = False
         self._layout_key = None
         self.header = Header(self)
@@ -510,6 +524,7 @@ class FirewatchApp:
         self.map.on_pin = self._on_pin_dropped
         self.map.on_report_click = self.start_report
         self.map.on_report_here = self.report_at
+        self.map.on_report_open = lambda r: dialogs.show_report_detail(self, r)
         self._apply_mode()
         self._sync_live()
         self.refresh()
@@ -587,6 +602,9 @@ class FirewatchApp:
                             ft.Row([dot(HOTSPOT, 7), txt("NASA hotspot", 11.5, DIM)], spacing=5, tight=True),
                             ft.Row([ft.Icon(ft.Icons.LOCATION_ON, color=INFO_BLUE, size=14),
                                     txt("Citizen report", 11.5, DIM)], spacing=3, tight=True),
+                            ft.Row([dot(EMERGENCY, 7), txt("Projected spread (indicative)", 11.5, DIM)], spacing=5, tight=True),
+                            ft.Row([ft.Icon(ft.Icons.CAMPAIGN, color=EMERGENCY, size=14),
+                                    txt("Station notice", 11.5, DIM)], spacing=3, tight=True),
                         ],
                         wrap=True, spacing=14, run_spacing=4,
                     ),
@@ -629,7 +647,7 @@ class FirewatchApp:
             spacing=12,
         )
 
-        self.tr_wind = Trend("Wind speed (mph)", WIND, 0, 45)
+        self.tr_wind = Trend("Wind speed (km/h)", WIND, 0, 70)
         self.tr_moist = Trend("Fuel moisture (%)", MOIST, 0, 26)
 
         self.trend_box = ft.Container(content=ft.Row([self.tr_wind, self.tr_moist], spacing=24))
@@ -708,6 +726,7 @@ class FirewatchApp:
                 self._sync_live()
                 if not config.IN_BROWSER and self._tick_n % (12 if self.saver else 4) == 1:
                     await self._pull_reports()
+                    await self._pull_notices()
                 self.refresh()
             except Exception:
                 # Usually the visitor left and the session closed; stop ticking.
@@ -733,7 +752,7 @@ class FirewatchApp:
         self.tr_moist.set_data(state["moist_history"])
 
         if state["wind_history"]:
-            self.tr_wind.value.value = f'{round(state["wind_history"][-1])} mph'
+            self.tr_wind.value.value = f'{round(state["wind_history"][-1])} km/h'
             self.tr_moist.value.value = f'{state["moist_history"][-1]:.1f}%'
 
         self.public.render(state, self.user)
@@ -773,7 +792,7 @@ class FirewatchApp:
         )
 
         self.t_wind.set(
-            f'{round(state["wind"]["speed"])} mph',
+            f'{round(state["wind"]["speed"])} km/h',
             "from " + compass_dir(state["wind"]["dir"]),
         )
 
@@ -809,11 +828,19 @@ class FirewatchApp:
     # -- accounts, alerts, helpers -----------------------------------------
     def set_user(self, user):
         self.user = user
+        self._remember(user)
         self.header.set_user(user)
         self.map.user_zone_id = user["home_zone_id"] if user else None
         if user:
             self.sync_subscription(user)
         self.refresh()
+
+    def _remember(self, user):
+        """Keep the signed-in email in this browser so the person is recognised on the next visit."""
+        if self.prefs is None:
+            return
+        value = user["email"] if (user and self.keep_signed_in) else ""
+        self.page.run_task(self.prefs.set, "firewatch_me", value)
 
     def is_browser_build(self):
         return config.IN_BROWSER
@@ -923,10 +950,27 @@ class FirewatchApp:
     # -- citizen reports ----------------------------------------------------------
     async def _pull_reports(self, force=False):
         try:
-            rows = await asyncio.to_thread(reports.recent_reports, force)
+            rows = await asyncio.to_thread(reports.recent_reports, force, firms.snapshot()["hotspots"])
         except Exception:
             return
         self.map.reports = rows
+
+    async def _pull_notices(self):
+        try:
+            self.map.notices = await asyncio.to_thread(incidents.active_notices)
+        except Exception:
+            pass
+
+    def refresh_notices(self):
+        if not config.IN_BROWSER:
+            self.page.run_task(self._pull_notices)
+
+    def open_safety(self):
+        """'What to do now' for the signed-in user's town, or the town with the highest risk."""
+        state = self.sim.snapshot()
+        zone_id = self.user["home_zone_id"] if self.user else state["top_zone_id"]
+        zone = next(z for z in state["zones"] if z["id"] == zone_id)
+        screens.show_safety(self, zone["lat"], zone["lon"], "veld")
 
     async def pull_reports_now(self):
         await self._pull_reports(force=True)
@@ -983,7 +1027,16 @@ async def main(page: ft.Page):
         except Exception:
             auth.use_browser_storage(None, None)     # fall back to in-memory for this visit
     page.clean()
-    FirewatchApp(page, saver=saver, prefs=prefs)
+    app = FirewatchApp(page, saver=saver, prefs=prefs)
+    if prefs is not None:
+        try:                                         # recognise a returning person without a new login
+            me = await asyncio.wait_for(prefs.get("firewatch_me"), timeout=3)
+            user = auth.find(me) if me else None
+            if user:
+                app.set_user(user)
+                app.toast(f"Welcome back, {user['name'].split()[0]}.")
+        except Exception:
+            pass
 
 
 if sys.platform == "emscripten":
