@@ -1,0 +1,5 @@
+# Used by Render (the hosted server). Plain requirements.txt stays flet-only for `flet build web`.
+-r requirements.txt
+flet-web==1.0.4
+# flet-web 1.0.4 passes an option (openapi_prefix) that newer FastAPI removed, so pin an older one.
+fastapi==0.115.14

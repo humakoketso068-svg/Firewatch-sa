@@ -223,7 +223,7 @@ Africa; they are announced by police, fire services and municipalities. The app 
 - **Real wind for the zone cards and trend charts**; only the spread projection uses the forecast.
 
 ## Deploy
-Push to GitHub, then Render > New > Blueprint (reads `render.yaml`) and fill in the secrets it asks for.
+Push to GitHub, then Render > New > Blueprint (reads `render.yaml`). If you made the service by hand, set Build Command to `pip install -r requirements-server.txt` and Start Command to `python main.py` and fill in the secrets it asks for.
 After changing environment variables, Render restarts the service by itself.
 
 ## Privacy notes

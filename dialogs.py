@@ -12,9 +12,9 @@ import places
 import reports
 import screens
 import sos
-from stations import distance_km, eta_minutes, nearby_stations
+from stations import distance_km, nearby_stations
 from ui import (
-    DIM, EMERGENCY, EMERGENCY_DARK, FAINT, INFO_BLUE, LINE, LINE_SOFT, RISK, TEXT, open_url,
+    DIM, EMERGENCY, EMERGENCY_DARK, FAINT, INFO_BLUE, RISK, TEXT, open_url,
     fmt_coord, primary_button, txt,
 )
 
@@ -111,6 +111,7 @@ def _dialog(app, title, body, actions, icon=ft.Icons.LOCAL_FIRE_DEPARTMENT, widt
 def show_login(app):
     email = _field("Email", ft.Icons.EMAIL, autofocus=True)
     password = _field("Password", ft.Icons.LOCK, password=True, can_reveal_password=True)
+    keep = ft.Checkbox(label="Keep me signed in on this device", value=True)
     error = _error_text()
 
     def submit(e=None):
@@ -120,6 +121,7 @@ def show_login(app):
             app.page.update()
             return
         app.page.pop_dialog()
+        app.keep_signed_in = bool(keep.value)
         app.set_user(user)
 
     password.on_submit = submit
@@ -127,7 +129,7 @@ def show_login(app):
     dlg = _dialog(
         app, "Log in to Firewatch",
         [txt("Welcome back. Log in to send emergency alerts with your details attached.", 12.5, DIM),
-         email, password, error,
+         email, password, keep, error,
          ft.TextButton("New here? Create an account", on_click=lambda e: (app.page.pop_dialog(), show_signup(app)))],
         [ft.TextButton("Cancel", on_click=lambda e: app.page.pop_dialog()),
          primary_button("Log in", submit)],
@@ -163,6 +165,7 @@ def show_signup(app):
             app.page.update()
             return
         app.page.pop_dialog()
+        app.keep_signed_in = True
         app.set_user(user)
         app.toast(f"Welcome, {user['name'].split()[0]}. Your account is ready.")
 

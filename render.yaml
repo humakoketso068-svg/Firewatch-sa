@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     # requirements.txt holds only flet, so the same file also works for `flet build web`.
-    buildCommand: pip install -r requirements.txt flet-web==1.0.4
+    buildCommand: pip install -r requirements-server.txt
     startCommand: python main.py
     envVars:
       - key: PYTHON_VERSION

@@ -24,7 +24,7 @@ import incidents
 import nearby
 import sos
 from ui import (
-    CONTAINED, DIM, EMERGENCY, EMERGENCY_DARK, FAINT, INFO_BLUE, LINE, RISK, TEXT, chip, fmt_coord,
+    CONTAINED, DIM, EMERGENCY, FAINT, INFO_BLUE, LINE, RISK, TEXT, chip, fmt_coord,
     open_url, primary_button, txt,
 )
 
@@ -47,7 +47,7 @@ def _status_chip(inc):
     return chip(label, STATUS_COLOR.get(inc.get("status"), DIM))
 
 
-def _banner(text, color=EMERGENCY, icon=ft.Icons.INFO):
+def _banner(text, color=EMERGENCY, icon=ft.Icons.INFO_OUTLINE):
     return ft.Container(
         content=ft.Row([ft.Icon(icon, color=color, size=18), ft.Container(content=txt(text, 12, TEXT), expand=True)],
                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
