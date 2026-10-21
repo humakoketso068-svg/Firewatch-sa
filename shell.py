@@ -32,6 +32,18 @@ SELECTED_BG = "#E8EEFC"
 GRADIENT = ft.LinearGradient(begin=ft.Alignment.CENTER_LEFT, end=ft.Alignment.CENTER_RIGHT, colors=[GRAD_A, GRAD_B])
 
 
+def backdrop(name="bg_hills.png"):
+    """A picture from assets/ used as a background. None if the file is missing."""
+    try:
+        import base64
+        import pathlib
+        data = (pathlib.Path(__file__).parent / "assets" / name).read_bytes()
+        return ft.DecorationImage(src=base64.b64encode(data).decode("ascii"), fit=ft.BoxFit.COVER,
+                                  alignment=ft.Alignment.BOTTOM_CENTER)
+    except Exception:
+        return None
+
+
 def mode_for(width, height=None):
     """'watch', 'phone', 'tablet' or 'desktop' from the window size."""
     width = width or 1000
@@ -228,10 +240,10 @@ class Sidebar(ft.Container):
                            alignment=ft.MainAxisAlignment.CENTER),
             border=ft.Border.all(1, "#5B6C95"), border_radius=10, padding=ft.Padding.symmetric(horizontal=10, vertical=9),
             ink=True, on_click=lambda e: open_url(shell.app.page, "tel:112"), tooltip="Call 112")
-        self.tag = txt("Safer Communities.\nGreener Tomorrow.", 12, NAV_TEXT)
+        self.tag = txt("Safer Communities.\nGreener Tomorrow.", 12, "#FFFFFF", bold=True)
         self.tag.text_align = ft.TextAlign.CENTER
         self.tag_box = ft.Container(
-            content=ft.Column([ft.Icon(ft.Icons.FOREST, color="#2A3C6D", size=72), self.tag], spacing=6,
+            content=ft.Column([self.tag], spacing=6,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             alignment=ft.Alignment.CENTER, padding=ft.Padding.only(bottom=8))
         self.column = ft.Column([
@@ -243,7 +255,7 @@ class Sidebar(ft.Container):
             page("settings", ft.Icons.SETTINGS_OUTLINED, "Settings"),
         ], spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
         super().__init__(content=ft.Column([self.column, self.sos_button, self.call_button, self.tag_box], spacing=8), width=256, bgcolor=NAVY,
-                         padding=ft.Padding.symmetric(horizontal=14, vertical=14))
+                         image=backdrop("side_fire.jpg"), padding=ft.Padding.symmetric(horizontal=14, vertical=14))
 
     def set_compact(self, compact):
         self.compact = compact
@@ -1049,7 +1061,8 @@ class Shell(ft.Container):
         self.sidebar = Sidebar(self)
         self.bottom_bar = BottomBar(self)
         self.watch = WatchView(app)
-        self.main = ft.Column([app.header, self.scroller], spacing=0, expand=True)
+        self.scene = ft.Container(content=self.scroller, expand=True, image=backdrop())
+        self.main = ft.Column([app.header, self.scene], spacing=0, expand=True)
         self.body = ft.Row([self.sidebar, self.main], spacing=0, expand=True, vertical_alignment=ft.CrossAxisAlignment.STRETCH)
         self.root = ft.Column([self.body, self.bottom_bar], spacing=0, expand=True)
         super().__init__(content=self.root, expand=True, bgcolor=PAGE_BG)
