@@ -130,3 +130,11 @@ def open_url(page, url):
             page._fw_launcher = launcher
         await launcher.launch_url(url)
     page.run_task(go)
+
+# Dashboard shell colours
+NAVY = "#0D1B3A"
+NAVY_LINE = "#1F3160"
+NAV_TEXT = "#B7C2DD"
+GRAD_A = "#2F6FED"
+GRAD_B = "#5547D9"
+PAGE_BG = "#F5F7FB"

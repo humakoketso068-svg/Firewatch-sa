@@ -32,42 +32,17 @@ import monitor
 import places
 import reports
 import screens
+import shell as shell_mod
 from firemap import FireMap
-from simulation import MAX_HISTORY, TICK_SECONDS, Simulation
+from simulation import TICK_SECONDS, Simulation
 from ui import (
-    CONTAINED, DIM, EMERGENCY, FAINT, FEED_COLOR, INFO_BLUE,
-    LINE, LINE_SOFT, MOIST, PANEL, RISK, TEXT, WIND, BG, card, chip, compass_dir,
-    dot, txt, HOTSPOT,
+    DIM, EMERGENCY, FAINT, INFO_BLUE, LINE, LINE_SOFT, MOIST, PANEL, RISK, TEXT, WIND, BG, card, chip, txt,
 )
 
 
 # ---------------------------------------------------------------------------
 # Reusable UI components
 # ---------------------------------------------------------------------------
-
-class StatTile(ft.Container):
-    def __init__(self, label, sub="", value_size=24):
-        self.value = txt("—", value_size, TEXT, font_family="monospace")
-        self.sub = txt(sub, 11, DIM)
-        super().__init__(
-            content=ft.Column(
-                [
-                    txt(label, 12, FAINT),
-                    self.value,
-                    self.sub,
-                ],
-                spacing=3,
-                tight=True,
-            ),
-            padding=ft.Padding.symmetric(vertical=4),
-        )
-
-    def set(self, value, sub=None, color=TEXT):
-        self.value.value = str(value)
-        self.value.color = color
-        if sub is not None:
-            self.sub.value = sub
-
 
 class RiskBar(ft.Container):
     def __init__(self):
@@ -112,12 +87,14 @@ class ZoneRow(ft.Container):
 class ZoneList(ft.ListView):
     def __init__(self):
         super().__init__(expand=True, spacing=0, auto_scroll=False)
+        self.levels = None       # risk-level filter: None or a set of levels
         self.rows = {}
         self.order = []
         self.limit = 30          # only the riskiest zones are drawn (fewer widgets = faster)
 
     def render(self, zones, wind_speed):
-        ranked = sorted(zones, key=lambda z: -z["risk"])[: self.limit]
+        ranked = sorted((z for z in zones if not self.levels or z["risk_level"] in self.levels),
+                        key=lambda z: -z["risk"])[: self.limit]
         ids = [z["id"] for z in ranked]
 
         if ids != self.order:
@@ -129,32 +106,6 @@ class ZoneList(ft.ListView):
 
         for zone in ranked:
             self.rows[zone["id"]].render(zone, wind_speed)
-
-
-class FeedItem(ft.Container):
-    def __init__(self, entry):
-        color = FEED_COLOR.get(entry["cls"], DIM)
-        top = txt(f'{entry["ts"]}   {entry["tag"]}', 11, color)
-        body = txt(entry["text"].replace("[b]", "").replace("[/b]", ""), 12.5, TEXT)
-        body.color = TEXT
-        super().__init__(
-            content=ft.Column([top, body], spacing=2, tight=True),
-            padding=ft.Padding.symmetric(vertical=9),
-            border=ft.Border.only(bottom=ft.BorderSide(1, LINE_SOFT)),
-        )
-
-
-class FeedList(ft.ListView):
-    def __init__(self):
-        super().__init__(expand=True, spacing=0, auto_scroll=False)
-        self.signature = None
-
-    def render(self, feed):
-        sig = tuple((e["ts"], e["tag"], e["text"]) for e in feed)
-        if sig == self.signature:
-            return
-        self.signature = sig
-        self.controls = [FeedItem(e) for e in feed]
 
 
 class Trend(ft.Container):
@@ -195,129 +146,6 @@ class Trend(ft.Container):
                     border_radius=2,
                 )
             )
-
-
-class StatusPill(ft.Container):
-    def __init__(self):
-        self.dot_control = dot(RISK["low"], 7)
-        self.label = txt("Connecting…", 12, TEXT)
-        super().__init__(
-            content=ft.Row(
-                [self.dot_control, self.label],
-                spacing=8,
-                tight=True,
-            ),
-            border=ft.Border.all(1, LINE),
-            border_radius=15,
-            bgcolor=PANEL,
-            padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-        )
-
-    def set_state(self, alert, label):
-        self.label.value = label
-        self.dot_control.bgcolor = RISK["extreme"] if alert else RISK["low"]
-        self.label.color = RISK["extreme"] if alert else TEXT
-        self.border = ft.Border.all(1, RISK["extreme"] if alert else LINE)
-
-
-
-def initials(name):
-    parts = [p for p in name.split() if p]
-    return (parts[0][0] + (parts[-1][0] if len(parts) > 1 else "")).upper() if parts else "?"
-
-
-class Header(ft.Container):
-    def __init__(self, app):
-        self.app = app
-        self.clock = txt("--:--:--", 12, DIM, font_family="monospace")
-        self.pill = StatusPill()
-        self.toggle_button = ft.OutlinedButton("Public view", on_click=app.toggle_view)
-        self.reset_button = ft.OutlinedButton("Reset", on_click=app.reset)
-        self.mobile = False
-        # Three-line menu: Log in / Sign up (or profile / log out once signed in).
-        self.menu = ft.PopupMenuButton(icon=ft.Icons.MENU, icon_size=24, tooltip="Menu", items=[])
-        self.buttons = ft.Row(alignment=ft.MainAxisAlignment.END, wrap=True)
-
-        super().__init__(
-            content=ft.ResponsiveRow(
-                [
-                    ft.Container(
-                        col={"xs": 12, "md": 5},
-                        content=ft.Column(
-                            [
-                                ft.Row(
-                                    [
-                                        dot(TEXT, 9),
-                                        txt("Firewatch", 19, TEXT, bold=True),
-                                    ],
-                                    spacing=8,
-                                    tight=True,
-                                ),
-                                txt(
-                                    "Live sensor fusion and fire-spread projection, "
-                                    "South Africa",
-                                    12,
-                                    DIM,
-                                ),
-                            ],
-                            spacing=2,
-                            tight=True,
-                        ),
-                    ),
-                    ft.Container(col={"xs": 12, "md": 7}, content=self.buttons),
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            bgcolor=PANEL,
-            padding=ft.Padding.symmetric(horizontal=16, vertical=10),
-            border=ft.Border.only(bottom=ft.BorderSide(1, LINE)),
-        )
-        self.set_user(None)
-
-    def set_user(self, user):
-        app = self.app
-        items = []
-        if self.mobile:
-            # On a phone the extra buttons live in the menu so the header stays one line.
-            items += [
-                ft.PopupMenuItem(content="Console view" if app.showing_public else "Public view",
-                                 icon=ft.Icons.PUBLIC, on_click=app.toggle_view),
-                ft.PopupMenuItem(content="Reset simulation", icon=ft.Icons.REFRESH,
-                                 on_click=app.reset),
-            ]
-        items += [
-            ft.PopupMenuItem(content="Incidents and timelines", icon=ft.Icons.TIMELINE,
-                             on_click=lambda e: screens.show_incidents(app)),
-            ft.PopupMenuItem(content="What to do now", icon=ft.Icons.HEALTH_AND_SAFETY,
-                             on_click=lambda e: app.open_safety()),
-            ft.PopupMenuItem(content="Station console", icon=ft.Icons.LOCAL_FIRE_DEPARTMENT,
-                             on_click=lambda e: screens.show_console(app)),
-        ]
-        if user is None:
-            items += [
-                ft.PopupMenuItem(content="Log in", icon=ft.Icons.LOGIN,
-                                 on_click=lambda e: dialogs.show_login(app)),
-                ft.PopupMenuItem(content="Sign up", icon=ft.Icons.PERSON_ADD,
-                                 on_click=lambda e: dialogs.show_signup(app)),
-            ]
-        else:
-            items += [
-                ft.PopupMenuItem(content=f"Signed in as {user['name'].split()[0]}",
-                                 icon=ft.Icons.ACCOUNT_CIRCLE, disabled=True),
-                ft.PopupMenuItem(content="My profile", icon=ft.Icons.PERSON,
-                                 on_click=lambda e: dialogs.show_profile(app)),
-                ft.PopupMenuItem(content="Alert settings and contacts", icon=ft.Icons.TUNE,
-                                 on_click=lambda e: screens.show_settings(app)),
-                ft.PopupMenuItem(content="Log out", icon=ft.Icons.LOGOUT,
-                                 on_click=lambda e: (app.set_user(None), app.toast("You have been logged out."))),
-            ]
-        self.menu.items = items
-        if self.mobile:
-            self.buttons.controls = [self.pill, self.menu]
-        else:
-            self.buttons.controls = [
-                self.clock, self.pill, self.reset_button, self.toggle_button, self.menu,
-            ]
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +304,6 @@ class FirewatchApp:
         page.bgcolor = BG
         page.padding = 0
         page.theme_mode = ft.ThemeMode.LIGHT
-        page.scroll = ft.ScrollMode.AUTO
         page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
 
         self.user = None
@@ -484,22 +311,12 @@ class FirewatchApp:
         self.keep_signed_in = True   # remember the signed-in person in this browser
         self.mobile = False
         self._layout_key = None
-        self.header = Header(self)
+        self.mode = None
+        self.header = shell_mod.Header(self)
         self.ops = self.build_ops()
+        self.mini = FireMap()           # small preview on the overview page
         self.public = PublicView()
-
-        self.holder = ft.Container(content=self.ops, padding=16)
         self.footer = txt("", 11, FAINT)
-
-        page.add(
-            self.header,
-            self.holder,
-            ft.Container(
-                content=self.footer,
-                alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.only(top=4, bottom=100),
-            ),
-        )
 
         # Round SOS button: floats at the bottom-right, above the page content,
         # and sits clear of the page footer.
@@ -518,6 +335,9 @@ class FirewatchApp:
             on_click=lambda e: dialogs.show_emergency(self),
         )
         page.overlay.append(self.sos)
+        self.shell = shell_mod.Shell(self)
+        page.scroll = None
+        page.add(self.shell)
         page.on_resize = self._on_resize
 
         self.map.light = saver
@@ -525,147 +345,24 @@ class FirewatchApp:
         self.map.on_report_click = self.start_report
         self.map.on_report_here = self.report_at
         self.map.on_report_open = lambda r: dialogs.show_report_detail(self, r)
+        self.mini.mobile = True
+        self.mini.on_report_click = lambda: self.shell.navigate("map")
+        self.mini.on_report_open = lambda r: dialogs.show_report_detail(self, r)
+        self.mini.on_report_here = self.report_at
+        self.mini.on_pin = self._on_pin_dropped
         self._apply_mode()
         self._sync_live()
         self.refresh()
         page.run_task(self.timer_loop)
 
     def build_ops(self):
-        self.t_sensors = StatTile("Sensors online", "Smoke and weather nodes")
-        self.t_fires = StatTile("Active detections", "No active ignitions")
-        self.t_top = StatTile("Highest-risk zone", value_size=17)
-        self.t_wind = StatTile("Wind")
-        self.t_moist = StatTile("Avg. fuel moisture", "10-hr fuel class")
-
-        stats = ft.ResponsiveRow(
-            [
-                ft.Container(content=x, col={"xs": 6, "sm": 4, "md": 2.4})
-                for x in [
-                    self.t_sensors,
-                    self.t_fires,
-                    self.t_top,
-                    self.t_wind,
-                    self.t_moist,
-                ]
-            ],
-            spacing=16,
-        )
-
+        """Create the map and the zone list. The pages that show them are built in shell.py."""
         self.zone_list = ZoneList()
-        self.zones_panel = zones_panel = card(
-            ft.Column(
-                [
-                    txt("Zones by risk", 13, TEXT, bold=True),
-                    ft.Divider(height=1, color=LINE_SOFT),
-                    self.zone_list,
-                ],
-                spacing=8,
-            ),
-            padding=14,
-            height=480,
-        )
-
         self.map = FireMap()
-        self.map_panel_meta = txt("", 11, FAINT)
-        self.live_switch = ft.Switch(
-            value=self.live, on_change=self.on_live_toggle, disabled=not firms.available(),
-            tooltip=("Real fire detections from NASA satellites" if firms.available()
-                     else "Needs the server version with a NASA FIRMS key"),
-        )
-        self.saver_switch = ft.Switch(
-            value=self.saver, on_change=self.on_saver_toggle,
-            tooltip="Slower updates and a lighter map, to save mobile data",
-        )
-        self.data_note = txt("", 11, FAINT)
-        self.map_panel = map_panel = card(
-            ft.Column(
-                [
-                    ft.Row(
-                        [txt("South Africa sensor map", 13, TEXT, bold=True),
-                         ft.Container(expand=True), self.map_panel_meta]
-                    ),
-                    ft.Row(
-                        [self.live_switch, txt("Live NASA data", 12, DIM),
-                         self.saver_switch, txt("Data saver", 12, DIM)],
-                        spacing=4, run_spacing=0, wrap=True,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    self.data_note,
-                    self.map,
-                    ft.Row(
-                        [
-                            ft.Row([dot(RISK["low"]), txt("Low", 11.5, DIM)], spacing=5, tight=True),
-                            ft.Row([dot(RISK["moderate"]), txt("Moderate", 11.5, DIM)], spacing=5, tight=True),
-                            ft.Row([dot(RISK["high"]), txt("High", 11.5, DIM)], spacing=5, tight=True),
-                            ft.Row([dot(RISK["extreme"]), txt("Extreme", 11.5, DIM)], spacing=5, tight=True),
-                            ft.Row([dot(CONTAINED), txt("Contained", 11.5, DIM)], spacing=5, tight=True),
-                            ft.Row([dot(HOTSPOT, 7), txt("NASA hotspot", 11.5, DIM)], spacing=5, tight=True),
-                            ft.Row([ft.Icon(ft.Icons.LOCATION_ON, color=INFO_BLUE, size=14),
-                                    txt("Citizen report", 11.5, DIM)], spacing=3, tight=True),
-                            ft.Row([dot(EMERGENCY, 7), txt("Projected spread (indicative)", 11.5, DIM)], spacing=5, tight=True),
-                            ft.Row([ft.Icon(ft.Icons.CAMPAIGN, color=EMERGENCY, size=14),
-                                    txt("Station notice", 11.5, DIM)], spacing=3, tight=True),
-                        ],
-                        wrap=True, spacing=14, run_spacing=4,
-                    ),
-                    txt(
-                        "Scroll, pinch or use + / − to zoom, drag to pan, or search for a place. "
-                        "Search any town, township or village, or zoom in and tap the map for exact coordinates. "
-                        "Tap the pin button to report smoke or fire.",
-                        11,
-                        FAINT,
-                    ),
-                ],
-                spacing=8,
-                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            ),
-            padding=10,
-            height=480,
-            expand=True,
-        )
-
-        self.feed_list = FeedList()
-        self.feed_panel = feed_panel = card(
-            ft.Column(
-                [
-                    txt("Event feed", 13, TEXT, bold=True),
-                    ft.Divider(height=1, color=LINE_SOFT),
-                    self.feed_list,
-                ],
-                spacing=8,
-            ),
-            padding=14,
-            height=480,
-        )
-
-        main_grid = ft.ResponsiveRow(
-            [
-                ft.Container(content=zones_panel, col={"xs": 12, "lg": 3}),
-                ft.Container(content=map_panel, col={"xs": 12, "lg": 6}),
-                ft.Container(content=feed_panel, col={"xs": 12, "lg": 3}),
-            ],
-            spacing=12,
-        )
-
+        self.data_note = txt("", 11.5, DIM)
         self.tr_wind = Trend("Wind speed (km/h)", WIND, 0, 70)
         self.tr_moist = Trend("Fuel moisture (%)", MOIST, 0, 26)
-
-        self.trend_box = ft.Container(content=ft.Row([self.tr_wind, self.tr_moist], spacing=24))
-        trends = card(
-            ft.Column(
-                [
-                    txt(f"Environmental trends, last {MAX_HISTORY} readings", 13, TEXT, bold=True),
-                    self.trend_box,
-                ],
-                spacing=10,
-            ),
-            padding=14,
-        )
-
-        return ft.Column(
-            [stats, main_grid, trends],
-            spacing=14,
-        )
+        return None
 
     def _on_resize(self, e=None):
         self._check_layout()
@@ -674,42 +371,20 @@ class FirewatchApp:
     def _check_layout(self):
         """Adapt sizes to the screen: phone (< 700 px wide), tablet or desktop."""
         width = self.page.width or 1000
-        mobile = width < 700
-        key = (mobile, int(width // 24))
+        mode = shell_mod.mode_for(width, self.page.height)
+        mobile = mode in ("phone", "watch")
+        key = (mode, int(width // 24))
         if key == self._layout_key:
             return
-        mode_changed = self._layout_key is None or self._layout_key[0] != mobile
         self._layout_key = key
+        self.mode = mode
         self.mobile = mobile
         self.map.mobile = mobile
-
-        self.holder.padding = 8 if mobile else 16
+        self.shell.apply(mode, width)
         self.zone_list.limit = 15 if mobile else 30
         if self.saver:
             self.zone_list.limit = min(self.zone_list.limit, 10)
-        self.zones_panel.height = 340 if mobile else 480
-        self.feed_panel.height = 300 if mobile else 480
-        self.map_panel_meta.visible = not mobile
-        if mobile:
-            self.map_panel.height = None
-            self.map_panel.expand = False
-            self.map.expand = False
-            self.map.height = max(260, min(440, width * 0.85))
-        else:
-            self.map_panel.height = 480
-            self.map_panel.expand = True
-            self.map.expand = True
-            self.map.height = None
-
-        for tr in (self.tr_wind, self.tr_moist):
-            tr.expand = not mobile
-        self.trend_box.content = (
-            ft.Column([self.tr_wind, self.tr_moist], spacing=12) if mobile
-            else ft.Row([self.tr_wind, self.tr_moist], spacing=24)
-        )
-        if mode_changed:
-            self.header.mobile = mobile
-            self.header.set_user(self.user)
+        self.shell.fit(mode, width)
 
     def stop(self, e=None):
         self.running = False
@@ -742,70 +417,24 @@ class FirewatchApp:
         self._check_layout()
         state = self.sim.snapshot()
 
-        self.update_stats(state)
-        self.zone_list.render(state["zones"], state["wind"]["speed"])
-        self.map.render(state)
-        self.map_panel_meta.value = f'tick {state["tick"]}, {state["server_time"]}'
+        cur = self.shell.current
+        if cur == "map":
+            self.zone_list.render(state["zones"], state["wind"]["speed"])
+            self.map.render(state)
+        elif cur == "overview" and self.mode != "watch":
+            for name in ("hotspots", "reports", "notices", "user_zone_id", "light"):
+                setattr(self.mini, name, getattr(self.map, name))
+            self.mini.render(state)
         self._update_note()
-        self.feed_list.render(state["feed"])
         self.tr_wind.set_data(state["wind_history"])
         self.tr_moist.set_data(state["moist_history"])
-
         if state["wind_history"]:
             self.tr_wind.value.value = f'{round(state["wind_history"][-1])} km/h'
             self.tr_moist.value.value = f'{state["moist_history"][-1]:.1f}%'
 
         self.public.render(state, self.user)
+        self.shell.update_state(state, self.user)
         self.page.update()
-
-    def update_stats(self, state):
-        zones = state["zones"]
-        active = [f for f in state["fires"] if not f["contained"]]
-        severe = any(f["severity"] == "extreme" for f in active)
-
-        self.t_sensors.set(len(zones))
-
-        names = [f["zone_name"] for f in active]
-        if not names:
-            sub = "No active ignitions"
-        elif len(names) <= 2:
-            sub = ", ".join(names)
-        else:
-            sub = f"{names[0]}, {names[1]} +{len(names)-2} more"
-
-        self.t_fires.set(
-            len(active),
-            sub,
-            RISK["extreme"] if severe else RISK["high"] if active else TEXT,
-        )
-
-        top = max(zones, key=lambda z: z["risk"])
-        top_color = (
-            RISK["extreme"] if top["risk_level"] == "extreme"
-            else RISK["high"] if top["risk_level"] == "high"
-            else TEXT
-        )
-        self.t_top.set(
-            top["name"],
-            f'{top["risk_level"].capitalize()}, score {top["risk"]:.2f}',
-            top_color,
-        )
-
-        self.t_wind.set(
-            f'{round(state["wind"]["speed"])} km/h',
-            "from " + compass_dir(state["wind"]["dir"]),
-        )
-
-        avg = sum(z["moisture"] for z in zones) / len(zones)
-        self.t_moist.set(f"{avg:.1f}%")
-
-        if active:
-            n = len(active)
-            self.header.pill.set_state(True, f"{n} active detection{'s' if n != 1 else ''}")
-        else:
-            self.header.pill.set_state(False, "All systems nominal")
-
-        self.header.clock.value = datetime.now().strftime("%H:%M:%S") + " local"
 
     def reset(self, e=None):
         self.sim = Simulation()
@@ -817,19 +446,13 @@ class FirewatchApp:
         self.refresh()
 
     def toggle_view(self, e=None):
-        self.showing_public = not self.showing_public
-        self.holder.content = self.public if self.showing_public else self.ops
-        self.header.toggle_button.content = (
-            "Console view" if self.showing_public else "Public view"
-        )
-        self.header.set_user(self.user)
-        self.page.update()
+        self.shell.navigate("overview" if self.showing_public else "public")
 
     # -- accounts, alerts, helpers -----------------------------------------
     def set_user(self, user):
         self.user = user
         self._remember(user)
-        self.header.set_user(user)
+        self.shell.set_user(user)
         self.map.user_zone_id = user["home_zone_id"] if user else None
         if user:
             self.sync_subscription(user)
@@ -1028,6 +651,9 @@ async def main(page: ft.Page):
             auth.use_browser_storage(None, None)     # fall back to in-memory for this visit
     page.clean()
     app = FirewatchApp(page, saver=saver, prefs=prefs)
+    start = (page.route or "/").strip("/").split("/")[0]       # deep link, e.g. /map or /about
+    if start in shell_mod.PAGES:
+        app.shell.navigate(start)
     if prefs is not None:
         try:                                         # recognise a returning person without a new login
             me = await asyncio.wait_for(prefs.get("firewatch_me"), timeout=3)

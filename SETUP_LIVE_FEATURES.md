@@ -231,3 +231,20 @@ After changing environment variables, Render restarts the service by itself.
   Tell users (the dialogs do) and delete rows on request.
 - Citizen reports are public and unverified, and show the reporter's first name only.
 - Reports need a login, are limited to 5 per person per hour and to places inside South Africa.
+
+## Layout and devices (shell.py)
+
+The app uses one dashboard layout that adapts to the screen:
+
+| Screen width | Layout |
+|---|---|
+| 1100 px and up | dark left menu with Send SOS, top bar with search, greeting and date card, stat cards, map preview, Recent Alerts |
+| 700-1099 px | same, with a slim icon-only menu |
+| 300-699 px | top bar, bottom navigation (Home, Map, Alerts, Reports, More), floating SOS button |
+| under 300 px | glance view for watch-size screens: status, nearest fire, SOS, Call 112 |
+
+Pages: Overview, Map (layer controls, legend, region and risk filters), Alerts (filter chips), Reports (stats, trends, citizen reports), Settings (Profile, Notifications, Map Preferences, Data & Privacy, System). Public status, All features and About are reached from Settings > System. SOS: "Send SOS" button in the menu plus the floating round button.
+Deep links work: `https://your-app/map`, `/alerts`, `/reports`, `/settings`.
+
+Flet apps cannot be installed on Apple Watch or Wear OS. The watch view appears when the page is opened
+on a very small screen. Real alerts reach a watch through SMS/email notifications mirrored from the paired phone.

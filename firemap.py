@@ -54,6 +54,8 @@ class FireMap(ft.Container):
         self.mobile = False
         self._gest_on = True
         self.hotspots = []            # NASA FIRMS detections
+        self.layers = {k: True for k in ('fires', 'zones', 'hotspots', 'reports', 'spread', 'notices')}
+        self.risk_filter = None       # None = all, or a set of risk levels to show
         self.reports = []             # citizen reports
         self.pin_mode = False         # waiting for the user to tap a spot
         self.pending_pin = None
@@ -448,11 +450,11 @@ class FireMap(ft.Container):
                         left=px - 60, top=py - 7, width=120, alignment=ft.Alignment.CENTER))
 
         # Fires
-        for fire in state["fires"]:
+        for fire in (state["fires"] if self.layers["fires"] else []):
             fx, fy = self._pos(fire["x"], fire["y"], scale, ox, oy)
             if not visible(fx, fy, 200):
                 continue
-            if not fire["contained"] and not self.light:
+            if not fire["contained"] and not self.light and self.layers["spread"]:
                 self._spread_layer(controls, fire, state, fx, fy, scale, visible)
             radius = fire["radius"] * scale
             size = max(8, radius * 1.4)
@@ -471,7 +473,7 @@ class FireMap(ft.Container):
                 bgcolor=color, border_radius=core / 2))
 
         # NASA FIRMS satellite hotspots
-        if self.hotspots:
+        if self.hotspots and self.layers["hotspots"]:
             budget, drawn = (250 if self.light else 600), 0
             hs_size = max(5.0, 5.5 * ms)
             for spot in self.hotspots:
@@ -503,6 +505,9 @@ class FireMap(ft.Container):
         nr = max(3.5, 4.2 * ms)
         nodes = []
         for zone in state["zones"]:
+            if not zone["on_fire"] and (not self.layers["zones"] or (
+                    self.risk_filter and zone["risk_level"] not in self.risk_filter)):
+                continue
             zx, zy = self._pos(zone["x"], zone["y"], scale, ox, oy)
             if not visible(zx, zy, 12):
                 continue
@@ -583,7 +588,7 @@ class FireMap(ft.Container):
                     padding=ft.Padding.symmetric(horizontal=5, vertical=1), left=hx - 12, top=hy - r - 17))
 
         # Citizen reports and the pin being placed
-        for r in self.reports:
+        for r in (self.reports if self.layers["reports"] else []):
             rx, ry = self._pos(*project(r["lat"], r["lon"]), scale, ox, oy)
             if not visible(rx, ry, 16):
                 continue
@@ -600,7 +605,7 @@ class FireMap(ft.Container):
                 controls.append(ft.Container(
                     content=ft.Icon(ft.Icons.VERIFIED, color=RISK["low"], size=max(9, size * 0.4)),
                     left=rx + size * 0.12, top=ry - size * 1.02))
-        for n in self.notices:
+        for n in (self.notices if self.layers["notices"] else []):
             try:
                 nx, ny = self._pos(*project(float(n["lat"]), float(n["lon"])), scale, ox, oy)
             except (KeyError, TypeError, ValueError):
