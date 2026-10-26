@@ -44,6 +44,21 @@ def backdrop(name="bg_hills.png"):
         return None
 
 
+_LOGO_BYTES = {}
+
+
+def logo_image(size=32, name="logo.png"):
+    """The Firewatch logo from assets/ (logo.png = badge, logo_mark.png = flame only).
+    Falls back to a flame icon if the file is missing, so the app never fails to start."""
+    try:
+        if name not in _LOGO_BYTES:
+            import pathlib
+            _LOGO_BYTES[name] = (pathlib.Path(__file__).parent / "assets" / name).read_bytes()
+        return ft.Image(src=_LOGO_BYTES[name], width=size, height=size, fit=ft.BoxFit.CONTAIN)
+    except Exception:
+        return ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF7A45", size=size)
+
+
 def mode_for(width, height=None):
     """'watch', 'phone', 'tablet' or 'desktop' from the window size."""
     width = width or 1000
@@ -93,9 +108,7 @@ class Header(ft.Container):
         self.mobile = False
         self.mode = "desktop"
         self.brand = ft.Row(
-            [ft.Container(content=ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FFFFFF", size=16),
-                          width=28, height=28, bgcolor=EMERGENCY, border_radius=14, alignment=ft.Alignment.CENTER),
-             txt("Firewatch", 17, TEXT, bold=True)], spacing=8, tight=True)
+            [logo_image(32, "logo.png"), txt("Firewatch", 17, TEXT, bold=True)], spacing=8, tight=True)
         self.search = ft.TextField(
             hint_text="Search a town, township or village…", prefix_icon=ft.Icons.SEARCH, dense=True,
             border_radius=22, text_size=13.5, bgcolor="#F1F4FA", border_color="#F1F4FA", expand=True,
@@ -226,7 +239,7 @@ class Sidebar(ft.Container):
             return item
 
         self.brand_text = txt("Firewatch", 24, "#FFFFFF", bold=True)
-        self.brand = ft.Row([ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT, color="#FF7A45", size=34), self.brand_text],
+        self.brand = ft.Row([logo_image(40, "logo_mark.png"), self.brand_text],
                             spacing=8, tight=True)
         self.sos_label = txt("Send SOS", 14, "#FFFFFF", bold=True)
         self.sos_call = txt("Call 112", 12, NAV_TEXT)

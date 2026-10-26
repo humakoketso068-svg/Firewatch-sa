@@ -301,6 +301,11 @@ class FirewatchApp:
         page.on_close = self.stop
 
         page.title = "Firewatch — Live Detection Console"
+        if not page.web:                       # desktop window: use the Firewatch icon instead of Flet's
+            try:
+                page.window.icon = "icon.ico" if sys.platform == "win32" else "icon.png"
+            except Exception:
+                pass
         page.bgcolor = BG
         page.padding = 0
         page.theme_mode = ft.ThemeMode.LIGHT
